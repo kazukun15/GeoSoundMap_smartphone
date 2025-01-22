@@ -34,47 +34,51 @@ def calculate_heatmap(speakers, L0, r_max, grid_lat, grid_lon):
     heat_data = [[grid_lat[i, j], grid_lon[i, j], sound_grid[i, j]] for i in range(Nx) for j in range(Ny) if not np.isnan(sound_grid[i, j])]
     return heat_data
 
-# サイドバー
-st.sidebar.title("操作パネル")
-L0 = st.sidebar.slider("初期音圧レベル (dB)", 50, 100, 80)
-r_max = st.sidebar.slider("最大伝播距離 (m)", 100, 2000, 500)
-
-new_speaker = st.sidebar.text_input("スピーカー (緯度,経度) 例: 34.25,133.20")
-if st.sidebar.button("スピーカー追加"):
-    try:
-        lat, lon = map(float, new_speaker.split(","))
-        st.session_state.speakers.append([lat, lon, [0.0]])
-        st.session_state.heatmap_data = None
-        st.sidebar.success("スピーカーを追加しました")
-    except:
-        st.sidebar.error("入力が正しくありません")
-
-if st.sidebar.button("スピーカーをリセット"):
-    st.session_state.speakers = []
-    st.session_state.heatmap_data = None
-
-# 地図サイズ
-container = st.container()
-map_width = st.sidebar.slider("地図の幅 (px)", 300, 1200, 600)
-map_height = st.sidebar.slider("地図の高さ (px)", 300, 800, 400)
-
-# ヒートマップデータ計算
+# 地図の表示
+st.title("ヒートマップ表示")
 lat_min, lat_max = st.session_state.map_center[0] - 0.01, st.session_state.map_center[0] + 0.01
 lon_min, lon_max = st.session_state.map_center[1] - 0.01, st.session_state.map_center[1] + 0.01
 grid_lat, grid_lon = np.meshgrid(np.linspace(lat_min, lat_max, 100), np.linspace(lon_min, lon_max, 100))
 
 if st.session_state.heatmap_data is None:
-    st.session_state.heatmap_data = calculate_heatmap(st.session_state.speakers, L0, r_max, grid_lat, grid_lon)
+    st.session_state.heatmap_data = calculate_heatmap(st.session_state.speakers, 80, 500, grid_lat, grid_lon)
 
-# 地図表示
-with container:
-    st.subheader("ヒートマップ表示")
-    m = folium.Map(location=st.session_state.map_center, zoom_start=st.session_state.map_zoom)
-    HeatMap(st.session_state.heatmap_data, radius=15).add_to(m)
-    st_data = st_folium(m, width=map_width, height=map_height, returned_objects=["center", "zoom"])
+m = folium.Map(location=st.session_state.map_center, zoom_start=st.session_state.map_zoom)
+HeatMap(st.session_state.heatmap_data, radius=15).add_to(m)
+st_data = st_folium(m, width=700, height=500, returned_objects=["center", "zoom"])
 
-# 地図の中心とズームを更新
 if st_data and "center" in st_data:
     st.session_state.map_center = [st_data["center"]["lat"], st_data["center"]["lng"]]
 if st_data and "zoom" in st_data:
     st.session_state.map_zoom = st_data["zoom"]
+
+# 操作パネル
+st.subheader("操作パネル")
+with st.form(key="controls"):
+    st.write("スピーカーの設定")
+    col1, col2 = st.columns(2)
+
+    with col1:
+        new_speaker = st.text_input("新しいスピーカー (緯度,経度)", placeholder="例: 34.2579,133.2072")
+        if st.form_submit_button("スピーカーを追加"):
+            try:
+                lat, lon = map(float, new_speaker.split(","))
+                st.session_state.speakers.append([lat, lon, [0.0]])
+                st.session_state.heatmap_data = None
+                st.success("スピーカーを追加しました")
+            except ValueError:
+                st.error("入力形式が正しくありません")
+
+    with col2:
+        if st.form_submit_button("スピーカーをリセット"):
+            st.session_state.speakers = []
+            st.session_state.heatmap_data = None
+            st.success("スピーカーをリセットしました")
+
+    # 音圧設定
+    st.write("音圧設定")
+    L0 = st.slider("初期音圧レベル (dB)", 50, 100, 80)
+    r_max = st.slider("最大伝播距離 (m)", 100, 2000, 500)
+    if L0 != 80 or r_max != 500:
+        st.session_state.heatmap_data = calculate_heatmap(st.session_state.speakers, L0, r_max, grid_lat, grid_lon)
+
