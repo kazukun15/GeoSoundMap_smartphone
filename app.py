@@ -163,9 +163,10 @@ with st.form(key="controls"):
 
 # 凡例バーを表示
 st.subheader("音圧レベルの凡例")
-colormap_html = cm.LinearColormap(
+colormap = cm.LinearColormap(
     colors=["blue", "green", "yellow", "red"],
     vmin=st.session_state.L0 - 40,
-    vmax=st.session_state.L0
-).to_html()
-st.components.v1.html(colormap_html, height=80)
+    vmax=st.session_state.L0,
+    caption="音圧レベル (dB)"
+)
+st.markdown(f'<div style="width:100%; text-align:center;">{colormap._repr_html_()}</div>', unsafe_allow_html=True)
