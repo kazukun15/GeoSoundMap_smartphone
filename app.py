@@ -13,23 +13,17 @@ if "map_zoom" not in st.session_state:
     st.session_state.map_zoom = 17
 
 if "speakers" not in st.session_state:
-    st.session_state.speakers = []
-
-if "measurements" not in st.session_state:
-    st.session_state.measurements = []
+    st.session_state.speakers = [[34.25741795269067, 133.20450105700033, [0.0, 0.0]]]
 
 if "heatmap_data" not in st.session_state:
     st.session_state.heatmap_data = None
-
-if "action_mode" not in st.session_state:
-    st.session_state.action_mode = None  # None, "add_speaker", "add_measurement"
 
 # 関数: ヒートマップデータ計算
 def calculate_heatmap(speakers, L0, r_max, grid_lat, grid_lon):
     Nx, Ny = grid_lat.shape
     power_sum = np.zeros((Nx, Ny))
     for spk in speakers:
-        lat, lon = spk[:2]
+        lat, lon, dirs = spk
         for i in range(Nx):
             for j in range(Ny):
                 r = math.sqrt((grid_lat[i, j] - lat) ** 2 + (grid_lon[i, j] - lon) ** 2) * 111320
@@ -40,65 +34,58 @@ def calculate_heatmap(speakers, L0, r_max, grid_lat, grid_lon):
     heat_data = [[grid_lat[i, j], grid_lon[i, j], sound_grid[i, j]] for i in range(Nx) for j in range(Ny) if not np.isnan(sound_grid[i, j])]
     return heat_data
 
-# 地図の設定
-st.title("地図上で操作可能な音圧シミュレーター")
+# 地図の表示
+st.title("ヒートマップ表示")
 lat_min, lat_max = st.session_state.map_center[0] - 0.01, st.session_state.map_center[0] + 0.01
 lon_min, lon_max = st.session_state.map_center[1] - 0.01, st.session_state.map_center[1] + 0.01
-grid_lat, grid_lon = np.meshgrid(np.linspace(lat_min, lat_max, 100), np.linspace(lon_min, lon_max, 100))
+
+# ズームレベルに応じて分割数を調整
+zoom_factor = 100 + (st.session_state.map_zoom - 17) * 20
+grid_lat, grid_lon = np.meshgrid(np.linspace(lat_min, lat_max, zoom_factor), np.linspace(lon_min, lon_max, zoom_factor))
 
 if st.session_state.heatmap_data is None:
     st.session_state.heatmap_data = calculate_heatmap(st.session_state.speakers, 80, 500, grid_lat, grid_lon)
 
-# 地図表示
 m = folium.Map(location=st.session_state.map_center, zoom_start=st.session_state.map_zoom)
-
-# スピーカーと計測値を地図上にプロット
-for spk in st.session_state.speakers:
-    folium.Marker(location=[spk[0], spk[1]], popup="スピーカー", icon=folium.Icon(color="blue")).add_to(m)
-
-for meas in st.session_state.measurements:
-    folium.Marker(location=[meas[0], meas[1]], popup=f"計測値: {meas[2]} dB", icon=folium.Icon(color="green")).add_to(m)
-
 HeatMap(st.session_state.heatmap_data, radius=15).add_to(m)
+st_data = st_folium(m, width=700, height=500, returned_objects=["center", "zoom"])
 
-st_data = st_folium(m, width=700, height=500, returned_objects=["click", "center", "zoom"])
-
-# 地図操作の結果を反映
-if st_data:
-    if "center" in st_data:
-        st.session_state.map_center = [st_data["center"]["lat"], st_data["center"]["lng"]]
-    if "zoom" in st_data:
+if st_data and "center" in st_data:
+    st.session_state.map_center = [st_data["center"]["lat"], st_data["center"]["lng"]]
+if st_data and "zoom" in st_data:
+    # ズームレベルが変更された場合に再計算
+    if st_data["zoom"] != st.session_state.map_zoom:
         st.session_state.map_zoom = st_data["zoom"]
-    if "click" in st_data and st_data["click"]:
-        clicked_lat, clicked_lon = st_data["click"]["lat"], st_data["click"]["lng"]
-        if st.session_state.action_mode == "add_speaker":
-            st.session_state.speakers.append([clicked_lat, clicked_lon])
-            st.session_state.heatmap_data = None
-            st.success(f"スピーカーを追加: ({clicked_lat:.6f}, {clicked_lon:.6f})")
-        elif st.session_state.action_mode == "add_measurement":
-            meas_value = st.number_input("計測値を入力 (dB)", min_value=0, max_value=120, step=1, value=60)
-            st.session_state.measurements.append([clicked_lat, clicked_lon, meas_value])
-            st.success(f"計測値を追加: ({clicked_lat:.6f}, {clicked_lon:.6f}), {meas_value} dB")
+        zoom_factor = 100 + (st_data["zoom"] - 17) * 20
+        grid_lat, grid_lon = np.meshgrid(np.linspace(lat_min, lat_max, zoom_factor), np.linspace(lon_min, lon_max, zoom_factor))
+        st.session_state.heatmap_data = calculate_heatmap(st.session_state.speakers, 80, 500, grid_lat, grid_lon)
 
 # 操作パネル
 st.subheader("操作パネル")
-action = st.radio("操作モード", options=["スピーカーを置く", "計測値を置く", "何もしない"], index=2)
+with st.form(key="controls"):
+    st.write("スピーカーの設定")
+    col1, col2 = st.columns(2)
 
-if action == "スピーカーを置く":
-    st.session_state.action_mode = "add_speaker"
-    st.info("地図をクリックしてスピーカーを追加してください")
-elif action == "計測値を置く":
-    st.session_state.action_mode = "add_measurement"
-    st.info("地図をクリックして計測値を追加してください")
-else:
-    st.session_state.action_mode = None
-    st.info("現在、何も追加しないモードです")
+    with col1:
+        new_speaker = st.text_input("新しいスピーカー (緯度,経度)", placeholder="例: 34.2579,133.2072")
+        if st.form_submit_button("スピーカーを追加"):
+            try:
+                lat, lon = map(float, new_speaker.split(","))
+                st.session_state.speakers.append([lat, lon, [0.0]])
+                st.session_state.heatmap_data = None
+                st.success("スピーカーを追加しました")
+            except ValueError:
+                st.error("入力形式が正しくありません")
 
-if st.button("スピーカーをリセット"):
-    st.session_state.speakers = []
-    st.session_state.heatmap_data = None
-    st.success("すべてのスピーカーをリセットしました")
+    with col2:
+        if st.form_submit_button("スピーカーをリセット"):
+            st.session_state.speakers = []
+            st.session_state.heatmap_data = None
+            st.success("スピーカーをリセットしました")
 
-if st.button("計測値をリセット"):
-    st.session_state.measurements = []
-    st.success("すべての計測値をリセットしました")
+    # 音圧設定
+    st.write("音圧設定")
+    L0 = st.slider("初期音圧レベル (dB)", 50, 100, 80)
+    r_max = st.slider("最大伝播距離 (m)", 100, 2000, 500)
+    if L0 != 80 or r_max != 500:
+        st.session_state.heatmap_data = calculate_heatmap(st.session_state.speakers, L0, r_max, grid_lat, grid_lon)
