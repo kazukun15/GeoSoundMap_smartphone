@@ -106,3 +106,50 @@ if st_data and "zoom" in st_data:
         zoom_factor = 100 + (st_data["zoom"] - 17) * 20
         grid_lat, grid_lon = np.meshgrid(np.linspace(lat_min, lat_max, zoom_factor), np.linspace(lon_min, lon_max, zoom_factor))
         st.session_state.heatmap_data = calculate_heatmap(st.session_state.speakers, 80, 500, grid_lat, grid_lon)
+
+# 操作パネル
+st.subheader("操作パネル")
+with st.form(key="controls"):
+    st.write("スピーカーの設定")
+    col1, col2 = st.columns(2)
+
+    with col1:
+        new_speaker = st.text_input("新しいスピーカー (緯度,経度,方向1,方向2...)", placeholder="例: 34.2579,133.2072,N,E")
+        if st.form_submit_button("スピーカーを追加"):
+            try:
+                parts = new_speaker.split(",")
+                lat, lon = float(parts[0]), float(parts[1])
+                directions = [parse_direction_to_degrees(d) for d in parts[2:]]
+                st.session_state.speakers.append([lat, lon, directions])
+                st.session_state.heatmap_data = None
+                st.success(f"スピーカーを追加しました: ({lat}, {lon}), 方向: {directions}")
+            except ValueError:
+                st.error("入力形式が正しくありません")
+
+    with col2:
+        if st.form_submit_button("スピーカーをリセット"):
+            st.session_state.speakers = []
+            st.session_state.heatmap_data = None
+            st.success("スピーカーをリセットしました")
+
+    # 計測値の入力
+    st.write("計測値の入力")
+    new_measurement = st.text_input("計測値 (緯度,経度,デシベル)", placeholder="例: 34.2579,133.2072,75")
+    if st.form_submit_button("計測値を追加"):
+        try:
+            lat, lon, db = map(float, new_measurement.split(","))
+            st.session_state.measurements.append([lat, lon, db])
+            st.success(f"計測値を追加しました: ({lat}, {lon}), {db} dB")
+        except ValueError:
+            st.error("入力形式が正しくありません")
+
+    if st.form_submit_button("計測値をリセット"):
+        st.session_state.measurements = []
+        st.success("計測値をリセットしました")
+
+    # 音圧設定
+    st.write("音圧設定")
+    L0 = st.slider("初期音圧レベル (dB)", 50, 100, 80)
+    r_max = st.slider("最大伝播距離 (m)", 100, 2000, 500)
+    if L0 != 80 or r_max != 500:
+        st.session_state.heatmap_data = calculate_heatmap(st.session_state.speakers, L0, r_max, grid_lat, grid_lon)
