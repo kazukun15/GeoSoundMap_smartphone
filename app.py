@@ -4,6 +4,7 @@ from folium.plugins import HeatMap
 from streamlit_folium import st_folium
 import numpy as np
 import math
+import branca.colormap as cm
 
 # 初期設定
 if "map_center" not in st.session_state:
@@ -20,6 +21,12 @@ if "measurements" not in st.session_state:
 
 if "heatmap_data" not in st.session_state:
     st.session_state.heatmap_data = None
+
+if "L0" not in st.session_state:
+    st.session_state.L0 = 80  # 初期音圧レベル
+
+if "r_max" not in st.session_state:
+    st.session_state.r_max = 500  # 初期伝播距離
 
 # 方角の変換
 DIRECTION_MAPPING = {
@@ -78,7 +85,7 @@ zoom_factor = 100 + (st.session_state.map_zoom - 14) * 20
 grid_lat, grid_lon = np.meshgrid(np.linspace(lat_min, lat_max, zoom_factor), np.linspace(lon_min, lon_max, zoom_factor))
 
 if st.session_state.heatmap_data is None:
-    st.session_state.heatmap_data = calculate_heatmap(st.session_state.speakers, 80, 500, grid_lat, grid_lon)
+    st.session_state.heatmap_data = calculate_heatmap(st.session_state.speakers, st.session_state.L0, st.session_state.r_max, grid_lat, grid_lon)
 
 m = folium.Map(location=st.session_state.map_center, zoom_start=st.session_state.map_zoom)
 
@@ -95,6 +102,13 @@ for meas in st.session_state.measurements:
 
 # ヒートマップの追加
 HeatMap(st.session_state.heatmap_data, radius=15, blur=20, min_opacity=0.4).add_to(m)
+
+# 凡例を作成
+colormap = cm.LinearColormap(colors=["blue", "green", "yellow", "red"], vmin=st.session_state.L0 - 40, vmax=st.session_state.L0)
+colormap.caption = "音圧レベル (dB)"
+colormap.add_to(m)
+
+# 地図を表示
 st_data = st_folium(m, width=700, height=500, returned_objects=["center", "zoom"])
 
 # 地図の中心・ズームを更新
@@ -146,8 +160,8 @@ with st.form(key="controls"):
 
     # 音圧設定
     st.write("音圧設定")
-    L0 = st.slider("初期音圧レベル (dB)", 50, 100, 80)
-    r_max = st.slider("最大伝播距離 (m)", 100, 2000, 500)
-
-    # スライダーの変更で即座にヒートマップを更新
-    st.session_state.heatmap_data = calculate_heatmap(st.session_state.speakers, L0, r_max, grid_lat, grid_lon)
+    st.session_state.L0 = st.slider("初期音圧レベル (dB)", 50, 100, st.session_state.L0)
+    st.session_state.r_max = st.slider("最大伝播距離 (m)", 100, 2000, st.session_state.r_max)
+    if st.form_submit_button("更新"):
+        st.session_state.heatmap_data = calculate_heatmap(st.session_state.speakers, st.session_state.L0, st.session_state.r_max, grid_lat, grid_lon)
+        st.success("ヒートマップを更新しました")
