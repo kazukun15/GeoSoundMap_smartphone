@@ -103,11 +103,6 @@ for meas in st.session_state.measurements:
 # ヒートマップの追加
 HeatMap(st.session_state.heatmap_data, radius=15, blur=20, min_opacity=0.4).add_to(m)
 
-# 凡例を作成
-colormap = cm.LinearColormap(colors=["blue", "green", "yellow", "red"], vmin=st.session_state.L0 - 40, vmax=st.session_state.L0)
-colormap.caption = "音圧レベル (dB)"
-colormap.add_to(m)
-
 # 地図を表示
 st_data = st_folium(m, width=700, height=500, returned_objects=["center", "zoom"])
 
@@ -165,3 +160,11 @@ with st.form(key="controls"):
     if st.form_submit_button("更新"):
         st.session_state.heatmap_data = calculate_heatmap(st.session_state.speakers, st.session_state.L0, st.session_state.r_max, grid_lat, grid_lon)
         st.success("ヒートマップを更新しました")
+
+# 凡例の表示
+st.subheader("音圧レベルの凡例")
+st.write(f"音圧レベルの範囲: **{st.session_state.L0 - 40} dB ～ {st.session_state.L0} dB**")
+st.write("""
+- **青:** 低音圧レベル  
+- **赤:** 高音圧レベル
+""")
