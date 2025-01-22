@@ -13,13 +13,26 @@ if "map_zoom" not in st.session_state:
     st.session_state.map_zoom = 17
 
 if "speakers" not in st.session_state:
-    st.session_state.speakers = [[34.25741795269067, 133.20450105700033, [0.0, 0.0]]]
+    st.session_state.speakers = [[34.25741795269067, 133.20450105700033, [0.0, 90.0]]]
 
 if "measurements" not in st.session_state:
     st.session_state.measurements = []  # 計測値リスト
 
 if "heatmap_data" not in st.session_state:
     st.session_state.heatmap_data = None
+
+# 方角の変換
+DIRECTION_MAPPING = {
+    "N": 0, "E": 90, "S": 180, "W": 270,
+    "NE": 45, "SE": 135, "SW": 225, "NW": 315
+}
+
+def parse_direction_to_degrees(direction_str):
+    """方角文字列を角度に変換"""
+    direction_str = direction_str.strip().upper()
+    if direction_str in DIRECTION_MAPPING:
+        return DIRECTION_MAPPING[direction_str]
+    return float(direction_str)  # 数値の場合そのまま返す
 
 # 音圧ヒートマップの計算
 def calculate_heatmap(speakers, L0, r_max, grid_lat, grid_lon):
@@ -94,12 +107,12 @@ with st.form(key="controls"):
     col1, col2 = st.columns(2)
 
     with col1:
-        new_speaker = st.text_input("新しいスピーカー (緯度,経度,方向1,方向2...)", placeholder="例: 34.2579,133.2072,0,90")
+        new_speaker = st.text_input("新しいスピーカー (緯度,経度,方向1,方向2...)", placeholder="例: 34.2579,133.2072,N,E")
         if st.form_submit_button("スピーカーを追加"):
             try:
                 parts = new_speaker.split(",")
                 lat, lon = float(parts[0]), float(parts[1])
-                directions = [float(d) for d in parts[2:]]
+                directions = [parse_direction_to_degrees(d) for d in parts[2:]]
                 st.session_state.speakers.append([lat, lon, directions])
                 st.session_state.heatmap_data = None
                 st.success(f"スピーカーを追加しました: ({lat}, {lon}), 方向: {directions}")
