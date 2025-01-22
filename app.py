@@ -13,10 +13,10 @@ if "map_zoom" not in st.session_state:
     st.session_state.map_zoom = 17
 
 if "speakers" not in st.session_state:
-    st.session_state.speakers = []  # [[lat, lon, [direction1, direction2, ...]], ...]
+    st.session_state.speakers = [[34.25741795269067, 133.20450105700033, [0.0, 0.0]]]
 
 if "measurements" not in st.session_state:
-    st.session_state.measurements = []  # [[lat, lon, db], ...]
+    st.session_state.measurements = []  # 計測値リスト
 
 if "heatmap_data" not in st.session_state:
     st.session_state.heatmap_data = None
@@ -29,7 +29,7 @@ def calculate_heatmap(speakers, L0, r_max, grid_lat, grid_lon):
         lat, lon, dirs = spk
         for i in range(Nx):
             for j in range(Ny):
-                r = math.sqrt((grid_lat[i, j] - lat) ** 2 + (grid_lon[i, j] - lon) ** 2) * 111320  # 距離(m)
+                r = math.sqrt((grid_lat[i, j] - lat) ** 2 + (grid_lon[i, j] - lon) ** 2) * 111320
                 if r < 1:  # 最小距離を1mに制限
                     r = 1
                 if r > r_max:  # 最大距離を超える場合は無視
@@ -53,7 +53,7 @@ st.title("音圧ヒートマップ表示")
 lat_min, lat_max = st.session_state.map_center[0] - 0.01, st.session_state.map_center[0] + 0.01
 lon_min, lon_max = st.session_state.map_center[1] - 0.01, st.session_state.map_center[1] + 0.01
 
-# ズームレベルに応じた分割数
+# ズームレベルに応じた分割数を調整
 zoom_factor = 100 + (st.session_state.map_zoom - 17) * 20
 grid_lat, grid_lon = np.meshgrid(np.linspace(lat_min, lat_max, zoom_factor), np.linspace(lon_min, lon_max, zoom_factor))
 
@@ -126,3 +126,10 @@ with st.form(key="controls"):
     if st.form_submit_button("計測値をリセット"):
         st.session_state.measurements = []
         st.success("計測値をリセットしました")
+
+    # 音圧設定
+    st.write("音圧設定")
+    L0 = st.slider("初期音圧レベル (dB)", 50, 100, 80)
+    r_max = st.slider("最大伝播距離 (m)", 100, 2000, 500)
+    if L0 != 80 or r_max != 500:
+        st.session_state.heatmap_data = calculate_heatmap(st.session_state.speakers, L0, r_max, grid_lat, grid_lon)
