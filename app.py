@@ -161,10 +161,11 @@ with st.form(key="controls"):
         st.session_state.heatmap_data = calculate_heatmap(st.session_state.speakers, st.session_state.L0, st.session_state.r_max, grid_lat, grid_lon)
         st.success("ヒートマップを更新しました")
 
-# 凡例の表示
+# 凡例バーを表示
 st.subheader("音圧レベルの凡例")
-st.write(f"音圧レベルの範囲: **{st.session_state.L0 - 40} dB ～ {st.session_state.L0} dB**")
-st.write("""
-- **青:** 低音圧レベル  
-- **赤:** 高音圧レベル
-""")
+colormap_html = cm.LinearColormap(
+    colors=["blue", "green", "yellow", "red"],
+    vmin=st.session_state.L0 - 40,
+    vmax=st.session_state.L0
+).to_html()
+st.components.v1.html(colormap_html, height=80)
