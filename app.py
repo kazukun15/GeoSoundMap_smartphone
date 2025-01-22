@@ -47,22 +47,29 @@ def calculate_heatmap(speakers, L0, r_max, grid_lat, grid_lon):
                     r = 1
                 if r > r_max:  # 最大距離を超える場合は無視
                     continue
+
                 # スピーカーの指向性を適用
                 bearing = math.atan2(grid_lon[i, j] - lon, grid_lat[i, j] - lat) * 180 / math.pi
                 bearing = (bearing + 360) % 360
                 power = 0
+
+                # 音圧減衰を指向性に基づいて計算
                 for direction in dirs:
                     angle_diff = min(abs(bearing - direction), 360 - abs(bearing - direction))
-                    if angle_diff <= 60:  # 指向性の範囲内
+                    directivity_factor = 1 - (angle_diff / 180)  # 指向性外でも音を減衰させる
+                    if angle_diff <= 60:  # 指向性内は強い音
                         power += 10 ** ((L0 - 20 * math.log10(r)) / 10)
+                    else:  # 指向性外でも減衰音を加算
+                        power += directivity_factor * 10 ** ((L0 - 20 * math.log10(r)) / 10)
                 power_sum[i, j] += power
+
     sound_grid = 10 * np.log10(power_sum, where=(power_sum > 0), out=np.full_like(power_sum, np.nan))
     sound_grid = np.clip(sound_grid, L0 - 40, L0)  # 範囲外の値をクリップ
     heat_data = [[grid_lat[i, j], grid_lon[i, j], sound_grid[i, j]] for i in range(Nx) for j in range(Ny) if not np.isnan(sound_grid[i, j])]
     return heat_data
 
 # 地図の表示
-st.title("音圧ヒートマップ表示")
+st.title("精度向上版 音圧ヒートマップ表示")
 lat_min, lat_max = st.session_state.map_center[0] - 0.01, st.session_state.map_center[0] + 0.01
 lon_min, lon_max = st.session_state.map_center[1] - 0.01, st.session_state.map_center[1] + 0.01
 
@@ -99,50 +106,3 @@ if st_data and "zoom" in st_data:
         zoom_factor = 100 + (st_data["zoom"] - 17) * 20
         grid_lat, grid_lon = np.meshgrid(np.linspace(lat_min, lat_max, zoom_factor), np.linspace(lon_min, lon_max, zoom_factor))
         st.session_state.heatmap_data = calculate_heatmap(st.session_state.speakers, 80, 500, grid_lat, grid_lon)
-
-# 操作パネル
-st.subheader("操作パネル")
-with st.form(key="controls"):
-    st.write("スピーカーの設定")
-    col1, col2 = st.columns(2)
-
-    with col1:
-        new_speaker = st.text_input("新しいスピーカー (緯度,経度,方向1,方向2...)", placeholder="例: 34.2579,133.2072,N,E")
-        if st.form_submit_button("スピーカーを追加"):
-            try:
-                parts = new_speaker.split(",")
-                lat, lon = float(parts[0]), float(parts[1])
-                directions = [parse_direction_to_degrees(d) for d in parts[2:]]
-                st.session_state.speakers.append([lat, lon, directions])
-                st.session_state.heatmap_data = None
-                st.success(f"スピーカーを追加しました: ({lat}, {lon}), 方向: {directions}")
-            except ValueError:
-                st.error("入力形式が正しくありません")
-
-    with col2:
-        if st.form_submit_button("スピーカーをリセット"):
-            st.session_state.speakers = []
-            st.session_state.heatmap_data = None
-            st.success("スピーカーをリセットしました")
-
-    # 計測値の入力
-    st.write("計測値の入力")
-    new_measurement = st.text_input("計測値 (緯度,経度,デシベル)", placeholder="例: 34.2579,133.2072,75")
-    if st.form_submit_button("計測値を追加"):
-        try:
-            lat, lon, db = map(float, new_measurement.split(","))
-            st.session_state.measurements.append([lat, lon, db])
-            st.success(f"計測値を追加しました: ({lat}, {lon}), {db} dB")
-        except ValueError:
-            st.error("入力形式が正しくありません")
-
-    if st.form_submit_button("計測値をリセット"):
-        st.session_state.measurements = []
-        st.success("計測値をリセットしました")
-
-    # 音圧設定
-    st.write("音圧設定")
-    L0 = st.slider("初期音圧レベル (dB)", 50, 100, 80)
-    r_max = st.slider("最大伝播距離 (m)", 100, 2000, 500)
-    if L0 != 80 or r_max != 500:
-        st.session_state.heatmap_data = calculate_heatmap(st.session_state.speakers, L0, r_max, grid_lat, grid_lon)
