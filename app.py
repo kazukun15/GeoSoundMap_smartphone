@@ -119,6 +119,7 @@ with st.form(key="controls"):
     st.write("スピーカーの設定")
     col1, col2 = st.columns(2)
 
+    # スピーカー追加
     with col1:
         new_speaker = st.text_input("新しいスピーカー (緯度,経度,方向1,方向2...)", placeholder="例: 34.2579,133.2072,N,E")
         if st.form_submit_button("スピーカーを追加"):
@@ -132,14 +133,15 @@ with st.form(key="controls"):
             except ValueError:
                 st.error("入力形式が正しくありません")
 
+    # スピーカーリセット
     with col2:
         if st.form_submit_button("スピーカーをリセット"):
             st.session_state.speakers = []
             st.session_state.heatmap_data = None
             st.success("スピーカーをリセットしました")
 
-    # 計測値の入力
-    st.write("計測値の入力")
+    # 計測値の追加
+    st.write("計測値の設定")
     new_measurement = st.text_input("計測値 (緯度,経度,デシベル)", placeholder="例: 34.2579,133.2072,75")
     if st.form_submit_button("計測値を追加"):
         try:
@@ -149,6 +151,7 @@ with st.form(key="controls"):
         except ValueError:
             st.error("入力形式が正しくありません")
 
+    # 計測値リセット
     if st.form_submit_button("計測値をリセット"):
         st.session_state.measurements = []
         st.success("計測値をリセットしました")
