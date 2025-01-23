@@ -168,3 +168,94 @@ if st_data:
 
 # 操作パネル
 st.subheader("操作パネル")
+# スピーカーの手動追加
+new_speaker = st.text_input("新しいスピーカー (緯度,経度,方向1,方向2...)", placeholder="例: 34.2579,133.2072,N,E")
+if st.button("スピーカーを追加"):
+    try:
+        parts = new_speaker.split(",")
+        lat, lon = float(parts[0]), float(parts[1])
+        directions = [parse_direction_to_degrees(dir_str) for dir_str in parts[2:]]
+        st.session_state.speakers.append([lat, lon, directions])
+        st.session_state.heatmap_data = None  # ヒートマップ再計算をトリガー
+        st.success(f"スピーカーを追加しました: ({lat}, {lon}), 方向: {directions}")
+    except ValueError:
+        st.error("入力形式が正しくありません。(緯度,経度,方向...) の形式で入力してください。")
+
+# スピーカーリセット
+if st.button("スピーカーをリセット"):
+    st.session_state.speakers = []
+    st.session_state.heatmap_data = None
+    st.session_state.contours = {"60dB": [], "80dB": []}
+    st.success("スピーカーをリセットしました")
+
+# 音圧設定
+st.session_state.L0 = st.slider("初期音圧レベル (dB)", 50, 100, st.session_state.L0)
+st.session_state.r_max = st.slider("最大伝播距離 (m)", 100, 2000, st.session_state.r_max)
+
+# 計測値の手動追加
+new_measurement = st.text_input("計測値 (緯度,経度,デシベル)", placeholder="例: 34.2579,133.2072,75")
+if st.button("計測値を追加"):
+    try:
+        lat, lon, db = map(float, new_measurement.split(","))
+        st.session_state.measurements.append([lat, lon, db])
+        st.success(f"計測値を追加しました: ({lat}, {lon}), {db} dB")
+    except ValueError:
+        st.error("入力形式が正しくありません。(緯度,経度,デシベル) の形式で入力してください。")
+
+# 計測値リセット
+if st.button("計測値をリセット"):
+    st.session_state.measurements = []
+    st.success("計測値をリセットしました")
+
+# ヒートマップ更新
+if st.button("ヒートマップを更新"):
+    if st.session_state.speakers:
+        st.session_state.heatmap_data, st.session_state.contours = calculate_heatmap_and_contours(
+            st.session_state.speakers,
+            st.session_state.L0,
+            st.session_state.r_max,
+            grid_lat,
+            grid_lon
+        )
+        st.success("ヒートマップを更新しました")
+    else:
+        st.error("スピーカーがありません。スピーカーを追加してください。")
+
+# CSVエクスポート
+st.subheader("データのエクスポート")
+col1, col2 = st.columns(2)
+
+with col1:
+    csv_data_speakers = export_to_csv(
+        st.session_state.speakers,
+        ["スピーカー緯度", "スピーカー経度", "方向1", "方向2", "方向3"]
+    )
+    st.download_button(
+        label="スピーカーCSVのダウンロード",
+        data=csv_data_speakers,
+        file_name="speakers.csv",
+        mime="text/csv"
+    )
+
+with col2:
+    csv_data_measurements = export_to_csv(
+        st.session_state.measurements,
+        ["計測位置緯度", "計測位置経度", "計測デシベル"]
+    )
+    st.download_button(
+        label="計測値CSVのダウンロード",
+        data=csv_data_measurements,
+        file_name="measurements.csv",
+        mime="text/csv"
+    )
+
+# 凡例の表示
+st.subheader("音圧レベルの凡例")
+colormap = cm.LinearColormap(
+    colors=["blue", "green", "yellow", "red"],
+    vmin=st.session_state.L0 - 40,
+    vmax=st.session_state.L0,
+    caption="音圧レベル (dB)"
+)
+st.markdown(f'<div style="width:100%; text-align:center;">{colormap._repr_html_()}</div>', unsafe_allow_html=True)
+
