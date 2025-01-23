@@ -89,6 +89,29 @@ def calculate_heatmap_and_contours(speakers, L0, r_max, grid_lat, grid_lon):
 
     return heat_data, contours
 
+# 計測値の理論値を計算する関数
+def calculate_theoretical_value(speakers, L0, r_max, lat, lon):
+    """単一地点での理論音圧レベルを計算"""
+    total_power = 0.0
+    for spk in speakers:
+        s_lat, s_lon, dirs = spk
+        distance = math.sqrt((lat - s_lat)**2 + (lon - s_lon)**2) * 111320  # 距離をメートルで計算
+        if distance < 1:  # 最小距離1m
+            distance = 1
+        if distance > r_max:  # 最大距離を超えた場合は影響なし
+            continue
+        bearing = (math.degrees(math.atan2(lon - s_lon, lat - s_lat)) + 360) % 360
+        power = 0.0
+        for direction in dirs:
+            angle_diff = abs(bearing - direction) % 360
+            angle_diff = min(angle_diff, 360 - angle_diff)
+            directivity_factor = max(1 - angle_diff / 180, 0)  # 指向性の減衰
+            power += directivity_factor * 10 ** ((L0 - 20 * math.log10(distance)) / 10)
+        total_power += power
+    if total_power > 0:
+        return 10 * math.log10(total_power)  # 音圧レベル(dB)を計算
+    return None  # 範囲外の場合
+
 # 地図の表示
 st.title("音圧ヒートマップ表示 - 防災スピーカーの非可聴域検出")
 lat_min, lat_max = st.session_state.map_center[0] - 0.01, st.session_state.map_center[0] + 0.01
@@ -108,27 +131,21 @@ m = folium.Map(location=st.session_state.map_center, zoom_start=st.session_state
 # スピーカーのマーカー
 for spk in st.session_state.speakers:
     lat, lon, dirs = spk
-    popup_text = f"""
-    <div style="font-size:14px; line-height:1.5;">
-        <b>スピーカー位置:</b> ({lat:.6f}, {lon:.6f})<br>
-        <b>方向:</b> {dirs}<br>
-        <b>初期音圧:</b> {st.session_state.L0} dB<br>
-        <b>最大距離:</b> {st.session_state.r_max} m
-    </div>
-    """
+    popup_text = f"スピーカー: ({lat:.6f}, {lon:.6f})<br>初期音圧レベル: {st.session_state.L0} dB<br>最大伝播距離: {st.session_state.r_max} m"
     folium.Marker(location=[lat, lon], popup=folium.Popup(popup_text, max_width=300), icon=folium.Icon(color="blue")).add_to(m)
 
 # 計測値のマーカー
 for meas in st.session_state.measurements:
     lat, lon, db = meas
-    theoretical_value = calculate_heatmap_and_contours(
-        [[lat, lon, []]], st.session_state.L0, st.session_state.r_max, grid_lat, grid_lon
-    )[0]
+    theoretical_value = calculate_theoretical_value(
+        st.session_state.speakers, st.session_state.L0, st.session_state.r_max, lat, lon
+    )
+    theoretical_text = f"{theoretical_value:.2f} dB" if theoretical_value is not None else "範囲外"
     popup_text = f"""
     <div style="font-size:14px; line-height:1.5;">
         <b>計測位置:</b> ({lat:.6f}, {lon:.6f})<br>
-        <b>計測値:</b> {db} dB<br>
-        <b>理論値:</b> {theoretical_value if theoretical_value else "範囲外"}
+        <b>計測値:</b> {db:.2f} dB<br>
+        <b>理論値:</b> {theoretical_text}
     </div>
     """
     folium.Marker(location=[lat, lon], popup=folium.Popup(popup_text, max_width=300), icon=folium.Icon(color="green")).add_to(m)
