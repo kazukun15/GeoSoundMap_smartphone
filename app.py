@@ -14,7 +14,11 @@ if "map_zoom" not in st.session_state:
     st.session_state.map_zoom = 14  # 初期ズームレベル
 
 if "speakers" not in st.session_state:
-    st.session_state.speakers = [[34.25741795269067, 133.20450105700033, [0.0, 90.0]]]
+    # テスト用に複数スピーカーを追加
+    st.session_state.speakers = [
+        [34.257417 + i * 0.001, 133.204501 + i * 0.001, [0.0, 90.0]]
+        for i in range(100)  # 上島町全体を想定して100個のスピーカーを追加
+    ]
 
 if "measurements" not in st.session_state:
     st.session_state.measurements = []  # 計測値リスト
@@ -41,34 +45,33 @@ def parse_direction_to_degrees(direction_str):
         return DIRECTION_MAPPING[direction_str]
     return float(direction_str)  # 数値の場合そのまま返す
 
-# 音圧ヒートマップの計算
+# 音圧ヒートマップの計算 (パフォーマンス最適化)
 def calculate_heatmap(speakers, L0, r_max, grid_lat, grid_lon):
     Nx, Ny = grid_lat.shape
     power_sum = np.zeros((Nx, Ny))
+
+    # ベクトル計算でスピーカーごとの寄与を効率的に加算
+    grid_coords = np.stack([grid_lat.ravel(), grid_lon.ravel()], axis=1)
+
     for spk in speakers:
         lat, lon, dirs = spk
-        for i in range(Nx):
-            for j in range(Ny):
-                r = math.sqrt((grid_lat[i, j] - lat) ** 2 + (grid_lon[i, j] - lon) ** 2) * 111320
-                if r < 1:  # 最小距離を1mに制限
-                    r = 1
-                if r > r_max:  # 最大距離を超える場合は無視
-                    continue
+        spk_coords = np.array([lat, lon])
+        distances = np.sqrt(np.sum((grid_coords - spk_coords) ** 2, axis=1)) * 111320  # 距離を計算 (メートル換算)
+        distances[distances < 1] = 1  # 最小距離を1mに設定
 
-                # スピーカーの指向性を適用
-                bearing = math.atan2(grid_lon[i, j] - lon, grid_lat[i, j] - lat) * 180 / math.pi
-                bearing = (bearing + 360) % 360
-                power = 0
+        # スピーカーの指向性を計算
+        bearings = np.degrees(np.arctan2(grid_coords[:, 1] - lon, grid_coords[:, 0] - lat)) % 360
+        power = np.zeros_like(distances)
 
-                # 音圧減衰を指向性に基づいて計算
-                for direction in dirs:
-                    angle_diff = min(abs(bearing - direction), 360 - abs(bearing - direction))
-                    directivity_factor = 1 - (angle_diff / 180)  # 指向性外でも音を減衰させる
-                    if angle_diff <= 60:  # 指向性内は強い音
-                        power += 10 ** ((L0 - 20 * math.log10(r)) / 10)
-                    else:  # 指向性外でも減衰音を加算
-                        power += directivity_factor * 10 ** ((L0 - 20 * math.log10(r)) / 10)
-                power_sum[i, j] += power
+        for direction in dirs:
+            angle_diff = np.abs(bearings - direction) % 360
+            angle_diff = np.minimum(angle_diff, 360 - angle_diff)
+            directivity_factor = np.clip(1 - angle_diff / 180, 0, 1)  # 指向性の減衰を適用
+            power += directivity_factor * 10 ** ((L0 - 20 * np.log10(distances)) / 10)
+
+        # 距離制限を適用
+        power[distances > r_max] = 0
+        power_sum += power.reshape(Nx, Ny)
 
     sound_grid = 10 * np.log10(power_sum, where=(power_sum > 0), out=np.full_like(power_sum, np.nan))
     sound_grid = np.clip(sound_grid, L0 - 40, L0)  # 範囲外の値をクリップ
