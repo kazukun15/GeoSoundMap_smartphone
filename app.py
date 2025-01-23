@@ -1,13 +1,13 @@
-import streamlit as st  
+import streamlit as st
 import folium
 from folium.plugins import HeatMap
 from streamlit_folium import st_folium
 import numpy as np
 import math
-from skimage import measure
 import pandas as pd
+from skimage import measure
 import branca.colormap as cm
-import io  # エクスポート用
+import io
 
 # ─────────────────────────────────────────────────────────────────────────
 # セッション初期設定
@@ -16,7 +16,7 @@ if "map_center" not in st.session_state:
     st.session_state.map_center = [34.25741795269067, 133.20450105700033]
 
 if "map_zoom" not in st.session_state:
-    st.session_state.map_zoom = 14  
+    st.session_state.map_zoom = 14
 
 if "speakers" not in st.session_state:
     st.session_state.speakers = [[34.25741795269067, 133.20450105700033, [0.0, 90.0]]]
@@ -31,10 +31,10 @@ if "contours" not in st.session_state:
     st.session_state.contours = {"60dB": [], "80dB": []}
 
 if "L0" not in st.session_state:
-    st.session_state.L0 = 80  
+    st.session_state.L0 = 80
 
 if "r_max" not in st.session_state:
-    st.session_state.r_max = 500  
+    st.session_state.r_max = 500
 
 # ─────────────────────────────────────────────────────────────────────────
 # 方角の変換
@@ -159,3 +159,12 @@ if st.session_state.heatmap_data:
     HeatMap(st.session_state.heatmap_data).add_to(m)
 
 st_data = st_folium(m, width=700, height=500)
+
+if st_data:
+    if "center" in st_data:
+        st.session_state.map_center = [st_data["center"]["lat"], st_data["center"]["lng"]]
+    if "zoom" in st_data:
+        st.session_state.map_zoom = st_data["zoom"]
+
+# 操作パネル
+st.subheader("操作パネル")
