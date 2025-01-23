@@ -12,6 +12,7 @@ from scipy.ndimage import gaussian_filter  # データの滑らかさ向上
 import geopandas as gpd
 import xml.etree.ElementTree as ET  # XMLパース用
 import json
+import rasterio.transform
 
 from shapely.geometry import LineString
 
@@ -458,6 +459,8 @@ def manage_entities():
                             if dirs:
                                 spk['directions'] = dirs
                                 st.success(f"スピーカー {idx+1} を更新しました。")
+                                # ヒートマップの再計算
+                                recalculate_heatmap()
                             else:
                                 st.warning("少なくとも1つの方向を指定してください。")
                         except ValueError:
@@ -466,6 +469,7 @@ def manage_entities():
                     if st.button("削除", key=f"delete_spk_{idx}"):
                         del st.session_state.speakers[idx]
                         st.success(f"スピーカー {idx+1} を削除しました。")
+                        recalculate_heatmap()
                         st.experimental_rerun()
     else:
         st.info("現在、スピーカーは登録されていません。")
@@ -492,12 +496,15 @@ def manage_entities():
                             meas['db'] = float(new_db)
                             meas['material'] = new_material
                             st.success(f"計測値 {idx+1} を更新しました。")
+                            # ヒートマップの再計算
+                            recalculate_heatmap()
                         except ValueError:
                             st.error("緯度、経度、またはdBの値が不正です。")
                 with cols_del[1]:
                     if st.button("削除", key=f"delete_meas_{idx}"):
                         del st.session_state.measurements[idx]
                         st.success(f"計測値 {idx+1} を削除しました。")
+                        recalculate_heatmap()
                         st.experimental_rerun()
     else:
         st.info("現在、計測値は登録されていません。")
@@ -548,6 +555,7 @@ def save_load_state():
                     st.session_state.L0 = state.get("L0", st.session_state.L0)
                     st.session_state.r_max = state.get("r_max", st.session_state.r_max)
                     st.success("保存された状態を読み込みました。ヒートマップを更新してください。")
+                    recalculate_heatmap()
                 except json.JSONDecodeError:
                     st.error("保存された状態の読み込みに失敗しました。")
         else:
@@ -618,6 +626,22 @@ def help_section():
     問題が発生した場合や質問がある場合は、サポートまでお問い合わせください。
     """)
 
+# ヒートマップの再計算関数
+def recalculate_heatmap():
+    if st.session_state.speakers and st.session_state.dem_data is not None and not st.session_state.buildings.empty:
+        with st.spinner("音圧計算中..."):
+            st.session_state.heatmap_data, st.session_state.contours, sound_grid_smoothed = calculate_heatmap_and_contours_with_obstruction(
+                st.session_state.speakers,
+                st.session_state.L0,
+                st.session_state.r_max,
+                st.session_state.grid_lat,
+                st.session_state.grid_lon,
+                st.session_state.buildings,
+                st.session_state.dem_data,
+                st.session_state.dem_transform
+            )
+        st.success("ヒートマップと等高線を再計算しました。")
+
 # Streamlitメイン表示
 st.title("防災スピーカ音圧ヒートマップ（地形・建物考慮版）")
 
@@ -631,6 +655,8 @@ if uploaded_dem and uploaded_buildings:
     dem_data, dem_transform = load_dem_xml(uploaded_dem)
     if dem_data.size > 0 and dem_transform is not None:
         st.sidebar.success("DEMデータを読み込みました。")
+        st.session_state.dem_data = dem_data
+        st.session_state.dem_transform = dem_transform
     else:
         st.sidebar.error("DEMデータの読み込みに失敗しました。")
 
@@ -638,6 +664,7 @@ if uploaded_dem and uploaded_buildings:
     buildings = load_buildings(uploaded_buildings)
     if not buildings.empty:
         st.sidebar.success("建物データを読み込みました。")
+        st.session_state.buildings = buildings
     else:
         st.sidebar.error("建物データの読み込みに失敗しました。")
 
@@ -655,6 +682,9 @@ if uploaded_dem and uploaded_buildings:
     )
     grid_lat = grid_lat.T
     grid_lon = grid_lon.T
+
+    st.session_state.grid_lat = grid_lat
+    st.session_state.grid_lon = grid_lon
 
     # 初回ヒートマップ計算
     if st.session_state.heatmap_data is None and st.session_state.speakers:
@@ -792,6 +822,9 @@ if uploaded_dem and uploaded_buildings:
             grid_lat = grid_lat.T
             grid_lon = grid_lon.T
 
+            st.session_state.grid_lat = grid_lat
+            st.session_state.grid_lon = grid_lon
+
             # ヒートマップ再計算
             if st.session_state.speakers and uploaded_dem and uploaded_buildings:
                 with st.spinner("ヒートマップ再計算中..."):
@@ -829,18 +862,7 @@ if uploaded_dem and uploaded_buildings:
             st.session_state.measurements.extend(measurements_loaded)
             st.success(f"{len(measurements_loaded)} 件の計測値を追加しました。")
         if st.session_state.speakers:
-            with st.spinner("音圧計算中..."):
-                st.session_state.heatmap_data, st.session_state.contours, sound_grid_smoothed = calculate_heatmap_and_contours_with_obstruction(
-                    st.session_state.speakers,
-                    st.session_state.L0,
-                    st.session_state.r_max,
-                    grid_lat,
-                    grid_lon,
-                    buildings,
-                    dem_data,
-                    dem_transform
-                )
-            st.success("CSVを読み込み、ヒートマップを更新しました。")
+            recalculate_heatmap()
 
     # スピーカーおよび計測値の管理
     manage_entities()
@@ -864,17 +886,7 @@ if uploaded_dem and uploaded_buildings:
             else:
                 st.session_state.speakers.append({"lat": lat_spk, "lon": lon_spk, "directions": dirs_spk})
                 if uploaded_dem and uploaded_buildings:
-                    with st.spinner("音圧計算中..."):
-                        st.session_state.heatmap_data, st.session_state.contours, sound_grid_smoothed = calculate_heatmap_and_contours_with_obstruction(
-                            st.session_state.speakers,
-                            st.session_state.L0,
-                            st.session_state.r_max,
-                            grid_lat,
-                            grid_lon,
-                            buildings,
-                            dem_data,
-                            dem_transform
-                        )
+                    recalculate_heatmap()
                 st.success(f"スピーカを追加しました: ({lat_spk}, {lon_spk}), 方向={', '.join([f'{d}°' for d in dirs_spk])}")
         except Exception as e:
             st.error(f"入力エラー: {e}")
@@ -883,13 +895,13 @@ if uploaded_dem and uploaded_buildings:
     st.markdown("### 新しい計測値を追加")
     col1, col2, col3, col4 = st.columns(4)
     with col1:
-        lat_input = st.text_input("緯度", placeholder="例: 34.2578")
+        lat_input = st.text_input("緯度", placeholder="例: 34.2578", key="new_meas_lat")
     with col2:
-        lon_input = st.text_input("経度", placeholder="例: 133.2075")
+        lon_input = st.text_input("経度", placeholder="例: 133.2075", key="new_meas_lon")
     with col3:
-        db_input = st.text_input("dB", placeholder="例: 75")
+        db_input = st.text_input("dB", placeholder="例: 75", key="new_meas_db")
     with col4:
-        material_input = st.selectbox("材質", list(st.session_state.MATERIAL_ATTENUATION.keys()))
+        material_input = st.selectbox("材質", list(st.session_state.MATERIAL_ATTENUATION.keys()), key="new_meas_material")
     if st.button("計測値を追加"):
         try:
             lat_m = float(lat_input.strip())
@@ -898,17 +910,7 @@ if uploaded_dem and uploaded_buildings:
             material = material_input.strip()
             st.session_state.measurements.append({"lat": lat_m, "lon": lon_m, "db": db_m, "material": material})
             if uploaded_dem and uploaded_buildings:
-                with st.spinner("音圧計算中..."):
-                    st.session_state.heatmap_data, st.session_state.contours, sound_grid_smoothed = calculate_heatmap_and_contours_with_obstruction(
-                        st.session_state.speakers,
-                        st.session_state.L0,
-                        st.session_state.r_max,
-                        grid_lat,
-                        grid_lon,
-                        buildings,
-                        dem_data,
-                        dem_transform
-                    )
+                recalculate_heatmap()
             st.success(f"計測値を追加しました: ({lat_m}, {lon_m}), {db_m} dB, 材質={material}")
         except Exception as e:
             st.error(f"入力エラー: {e}")
@@ -917,9 +919,9 @@ if uploaded_dem and uploaded_buildings:
     st.markdown("### 材質の管理")
     col1, col2 = st.columns(2)
     with col1:
-        new_material = st.text_input("新しい材質名", placeholder="例: タイル")
+        new_material = st.text_input("新しい材質名", placeholder="例: タイル", key="new_material_name")
     with col2:
-        new_attenuation = st.number_input("減衰量 (dB)", min_value=0, max_value=100, step=1)
+        new_attenuation = st.number_input("減衰量 (dB)", min_value=0, max_value=100, step=1, key="new_material_attenuation")
     if st.button("材質を追加"):
         if new_material and new_attenuation:
             if new_material in st.session_state.MATERIAL_ATTENUATION:
@@ -946,50 +948,19 @@ if uploaded_dem and uploaded_buildings:
         if st.button("スピーカをリセット"):
             st.session_state.speakers = []
             if uploaded_dem and uploaded_buildings:
-                with st.spinner("音圧計算中..."):
-                    st.session_state.heatmap_data, st.session_state.contours, sound_grid_smoothed = calculate_heatmap_and_contours_with_obstruction(
-                        st.session_state.speakers,
-                        st.session_state.L0,
-                        st.session_state.r_max,
-                        grid_lat,
-                        grid_lon,
-                        buildings,
-                        dem_data,
-                        dem_transform
-                    )
+                recalculate_heatmap()
             st.success("スピーカをリセットしました。ヒートマップを更新しました。")
     with col2:
         if st.button("計測値をリセット"):
             st.session_state.measurements = []
             if uploaded_dem and uploaded_buildings:
-                with st.spinner("音圧計算中..."):
-                    st.session_state.heatmap_data, st.session_state.contours, sound_grid_smoothed = calculate_heatmap_and_contours_with_obstruction(
-                        st.session_state.speakers,
-                        st.session_state.L0,
-                        st.session_state.r_max,
-                        grid_lat,
-                        grid_lon,
-                        buildings,
-                        dem_data,
-                        dem_transform
-                    )
+                recalculate_heatmap()
             st.success("計測値をリセットしました。ヒートマップを更新しました。")
 
     # 更新ボタン: ヒートマップ再計算
     if st.button("ヒートマップを更新"):
         if st.session_state.speakers and uploaded_dem and uploaded_buildings:
-            with st.spinner("ヒートマップ再計算中..."):
-                st.session_state.heatmap_data, st.session_state.contours, sound_grid_smoothed = calculate_heatmap_and_contours_with_obstruction(
-                    st.session_state.speakers,
-                    st.session_state.L0,
-                    st.session_state.r_max,
-                    grid_lat,
-                    grid_lon,
-                    buildings,
-                    dem_data,
-                    dem_transform
-                )
-            st.success("ヒートマップと等高線を再計算しました")
+            recalculate_heatmap()
         else:
             st.error("スピーカがありません。または、DEM・建物データをアップロードしてください。")
 
