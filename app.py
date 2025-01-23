@@ -45,7 +45,7 @@ def parse_direction_to_degrees(direction_str):
         return DIRECTION_MAPPING[direction_str]
     return float(direction_str)  # 数値の場合そのまま返す
 
-# 音圧ヒートマップの計算
+# 音圧ヒートマップと等高線の計算
 def calculate_heatmap_and_contours(speakers, L0, r_max, grid_lat, grid_lon):
     Nx, Ny = grid_lat.shape
     power_sum = np.zeros((Nx, Ny))
@@ -171,10 +171,13 @@ with st.form(key="controls"):
     st.session_state.r_max = st.slider("最大伝播距離 (m)", 100, 2000, st.session_state.r_max)
 
     if st.form_submit_button("更新"):
-        st.session_state.heatmap_data, st.session_state.contours = calculate_heatmap_and_contours(
-            st.session_state.speakers, st.session_state.L0, st.session_state.r_max, grid_lat, grid_lon
-        )
-        st.success("ヒートマップと等高線を更新しました")
+        if st.session_state.speakers:
+            st.session_state.heatmap_data, st.session_state.contours = calculate_heatmap_and_contours(
+                st.session_state.speakers, st.session_state.L0, st.session_state.r_max, grid_lat, grid_lon
+            )
+            st.success("ヒートマップと等高線を更新しました")
+        else:
+            st.error("スピーカーが存在しません。")
 
 # 凡例バーを表示
 st.subheader("音圧レベルの凡例")
