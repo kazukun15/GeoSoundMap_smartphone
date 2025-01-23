@@ -9,7 +9,7 @@ from skimage import measure
 import branca.colormap as cm
 import io
 
-# ───────────── 初期設定 ───────────── #
+# 初期設定
 if "map_center" not in st.session_state:
     st.session_state.map_center = [34.25741795269067, 133.20450105700033]
 if "map_zoom" not in st.session_state:
@@ -38,7 +38,7 @@ def parse_direction(direction_str):
         st.error(f"方向 '{direction_str}' を変換できません。0度に設定します。")
         return 0.0
 
-# ───────────── CSV機能 ───────────── #
+# CSV読み込み
 def load_csv(file):
     try:
         df = pd.read_csv(file)
@@ -56,13 +56,28 @@ def load_csv(file):
         st.error(f"CSV読み込みエラー: {e}")
         return [], []
 
+# CSVエクスポート
 def export_csv(data, columns):
-    df = pd.DataFrame(data, columns=columns)
+    rows = []
+    for entry in data:
+        if len(entry) == 3 and isinstance(entry[2], list):
+            lat, lon, directions = entry
+            row = {
+                "スピーカー緯度": lat,
+                "スピーカー経度": lon,
+                "方向1": directions[0] if len(directions) > 0 else "",
+                "方向2": directions[1] if len(directions) > 1 else "",
+                "方向3": directions[2] if len(directions) > 2 else ""
+            }
+        else:
+            row = {columns[i]: entry[i] for i in range(len(columns))}
+        rows.append(row)
+    df = pd.DataFrame(rows, columns=columns)
     buffer = io.StringIO()
     df.to_csv(buffer, index=False)
     return buffer.getvalue().encode("utf-8")
 
-# ───────────── ヒートマップ計算 ───────────── #
+# ヒートマップ計算
 def calculate_heatmap(speakers, L0, r_max, grid_lat, grid_lon):
     Nx, Ny = grid_lat.shape
     power_sum = np.zeros((Nx, Ny))
@@ -90,7 +105,7 @@ def calculate_heatmap(speakers, L0, r_max, grid_lat, grid_lon):
     heat_data = [[grid_lat[i, j], grid_lon[i, j], sound_grid[i, j]] for i in range(Nx) for j in range(Ny) if not np.isnan(sound_grid[i, j])]
     return heat_data
 
-# ───────────── アプリ表示 ───────────── #
+# アプリ
 st.title("防災スピーカー音圧可視化マップ")
 
 uploaded_file = st.file_uploader("CSVファイルをアップロード", type=["csv"])
@@ -143,4 +158,3 @@ st.session_state.r_max = st.slider("最大伝播距離 (m)", 100, 2000, st.sessi
 
 csv_data_speakers = export_csv(st.session_state.speakers, ["スピーカー緯度", "スピーカー経度", "方向1", "方向2", "方向3"])
 st.download_button("スピーカーCSVダウンロード", csv_data_speakers, "speakers.csv", "text/csv")
-
