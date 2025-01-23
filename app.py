@@ -130,8 +130,15 @@ for spk in st.session_state.speakers:
     popup_text = f"<b>スピーカー</b>: ({lat:.6f}, {lon:.6f})<br><b>方向</b>: {dirs}"
     folium.Marker(location=[lat, lon], popup=folium.Popup(popup_text, max_width=300)).add_to(m)
 
+# ヒートマップ追加（透明度調整）
 if st.session_state.heatmap_data:
-    HeatMap(st.session_state.heatmap_data).add_to(m)
+    HeatMap(
+        st.session_state.heatmap_data,
+        min_opacity=0.3,  # 透明度の最小値
+        max_opacity=0.8,  # 透明度の最大値
+        radius=15,
+        blur=20
+    ).add_to(m)
 
 st_data = st_folium(m, width=700, height=500)
 
