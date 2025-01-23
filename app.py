@@ -84,9 +84,50 @@ def calc_indoor_db(theoretical_db, material):
     indoor_db = theoretical_db - attenuation
     return max(indoor_db, st.session_state.L0 - 40)  # 最小値はL0-40dBにクリップ
 
-# ─────────────────────────────────────────────────────────────────────────
+# レイ・トレーシング関数
+def is_obstructed(speaker, receiver, buildings, dem_data, dem_transform):
+    """
+    スピーカーから受信点への音波が地形や建物によって遮断されているかを判定します。
+    speaker: [x, y] 経度, 緯度
+    receiver: [x, y] 経度, 緯度
+    buildings: GeoDataFrame
+    dem_data: NumPy配列
+    dem_transform: rasterio.transform.Affine
+    """
+    line = LineString([speaker, receiver])
+
+    # 建物による遮断判定
+    if buildings.intersects(line).any():
+        return True  # 建物により遮断されている
+
+    # 地形による遮断判定
+    # サンプルポイント間隔を設定（例: 10mごと）
+    num_samples = int(line.length * 0.1)  # 10mごとのサンプル
+    if num_samples < 2:
+        num_samples = 2
+
+    for i in range(1, num_samples):
+        point = line.interpolate(float(i) / num_samples, normalized=True)
+        # 緯度経度をDEMのインデックスに変換
+        row, col = rasterio.transform.rowcol(dem_transform, point.x, point.y)
+        try:
+            elevation = dem_data[row, col]
+        except IndexError:
+            elevation = 0  # データ外の場合は0とする
+
+        # 音波の直線上の高度
+        # スピーカーと受信点の高度が不明な場合は、DEMから取得
+        # ここでは簡単化のため、スピーカーと受信点の高度を0と仮定
+        speaker_elevation = 0  # 必要に応じて修正
+        receiver_elevation = 0  # 必要に応じて修正
+        expected_elevation = speaker_elevation + (receiver_elevation - speaker_elevation) * (i / num_samples)
+
+        if elevation > expected_elevation:
+            return True  # 地形により遮断されている
+
+    return False  # 遮断なし
+
 # 特定1地点での音圧理論値(dB)を計算する関数（障害物考慮版）
-# ─────────────────────────────────────────────────────────────────────────
 def calc_theoretical_db_with_obstruction(lat, lon, speakers, L0, r_max, buildings, dem_data, dem_transform):
     """
     渡された1点(lat, lon)に対して、障害物を考慮した複数スピーカの合成音圧レベル(dB)を理論計算。
@@ -139,68 +180,12 @@ def calc_theoretical_db_with_obstruction(lat, lon, speakers, L0, r_max, building
     db_value = max(L0 - 40, min(db_value, L0))
     return db_value
 
-# ─────────────────────────────────────────────────────────────────────────
-# レイ・トレーシング関数
-# ─────────────────────────────────────────────────────────────────────────
-def is_obstructed(speaker, receiver, buildings, dem_data, dem_transform):
-    """
-    スピーカーから受信点への音波が地形や建物によって遮断されているかを判定します。
-    speaker: [x, y] 経度, 緯度
-    receiver: [x, y] 経度, 緯度
-    buildings: GeoDataFrame
-    dem_data: NumPy配列
-    dem_transform: rasterio.transform.Affine
-    """
-    line = LineString([speaker, receiver])
-
-    # 建物による遮断判定
-    if buildings.intersects(line).any():
-        return True  # 建物により遮断されている
-
-    # 地形による遮断判定
-    # サンプルポイント間隔を設定（例: 10mごと）
-    num_samples = int(line.length * 0.1)  # 10mごとのサンプル
-    if num_samples < 2:
-        num_samples = 2
-
-    for i in range(1, num_samples):
-        point = line.interpolate(float(i) / num_samples, normalized=True)
-        # 緯度経度をDEMのインデックスに変換
-        row, col = rasterio.transform.rowcol(dem_transform, point.x, point.y)
-        try:
-            elevation = dem_data[row, col]
-        except IndexError:
-            elevation = 0  # データ外の場合は0とする
-
-        # 音波の直線上の高度
-        # スピーカーと受信点の高度が不明な場合は、DEMから取得
-        # ここでは簡単化のため、スピーカーと受信点の高度を0と仮定
-        speaker_elevation = 0  # 必要に応じて修正
-        receiver_elevation = 0  # 必要に応じて修正
-        expected_elevation = speaker_elevation + (receiver_elevation - speaker_elevation) * (i / num_samples)
-
-        if elevation > expected_elevation:
-            return True  # 地形により遮断されている
-
-    return False  # 遮断なし
-
-# ─────────────────────────────────────────────────────────────────────────
 # ヒートマップ & 等高線の計算（障害物考慮版）
-# ─────────────────────────────────────────────────────────────────────────
 def calculate_heatmap_and_contours_with_obstruction(speakers, L0, r_max, grid_lat, grid_lon, buildings, dem_data, dem_transform):
     Nx, Ny = grid_lat.shape
-    power_sum = 0.0
     sound_grid = np.full((Nx, Ny), np.nan, dtype=float)
 
-    # 受信点のリストを作成
-    receiver_coords = []
-    for i in range(Nx):
-        for j in range(Ny):
-            lat = grid_lat[i, j]
-            lon = grid_lon[i, j]
-            receiver_coords.append([lon, lat])  # shapelyでは経度がx, 緯度がy
-
-    # バッチ処理を避けるため、ループで計算（パフォーマンスが低下する可能性あり）
+    # 各グリッドポイントで音圧を計算
     for i in range(Nx):
         for j in range(Ny):
             lat = grid_lat[i, j]
@@ -266,9 +251,7 @@ def calculate_heatmap_and_contours_with_obstruction(speakers, L0, r_max, grid_la
 
     return heat_data, contours, sound_grid_smoothed
 
-# ─────────────────────────────────────────────────────────────────────────
 # CSVインポート (種別/緯度/経度/データ1..4 形式)
-# ─────────────────────────────────────────────────────────────────────────
 def load_csv(file):
     try:
         df = pd.read_csv(file)
@@ -315,9 +298,7 @@ def load_csv(file):
         st.error(f"CSV読み込み中にエラー: {e}")
         return [], []
 
-# ─────────────────────────────────────────────────────────────────────────
 # CSVエクスポート (種別/緯度/経度/データ1..4 形式)
-# ─────────────────────────────────────────────────────────────────────────
 def export_to_csv(speakers, measurements):
     columns = ["種別","緯度","経度","データ1","データ2","データ3","データ4"]
     rows = []
@@ -351,9 +332,46 @@ def export_to_csv(speakers, measurements):
     df.to_csv(buffer, index=False)
     return buffer.getvalue().encode("utf-8")
 
-# ─────────────────────────────────────────────────────────────────────────
 # マップにDEMと建物を追加する関数
-# ─────────────────────────────────────────────────────────────────────────
+def add_dem_to_map(m, dem_data, dem_transform, contour_interval=100):
+    """
+    DEMデータの等高線をマップに追加します。
+    """
+    import matplotlib.pyplot as plt
+    from skimage import measure
+
+    try:
+        contours = measure.find_contours(dem_data, level=range(int(np.min(dem_data)), int(np.max(dem_data)), contour_interval))
+    except Exception as e:
+        st.error(f"DEMデータの等高線生成に失敗しました: {e}")
+        return
+
+    for contour in contours:
+        lat_lon_contour = []
+        for y, x in contour:
+            # DEMの行列インデックスを緯度経度に変換
+            try:
+                lon, lat = rasterio.transform.xy(dem_transform, y, x)
+                lat_lon_contour.append((lat, lon))
+            except Exception as e:
+                st.warning(f"DEMデータの座標変換に失敗しました: {e}")
+                continue
+        if len(lat_lon_contour) > 1:
+            folium.PolyLine(locations=lat_lon_contour, color='gray', weight=1, opacity=0.5).add_to(m)
+
+def add_buildings_to_map(m, buildings):
+    """
+    建物データをマップに追加します。
+    """
+    try:
+        for _, building in buildings.iterrows():
+            folium.GeoJson(
+                building.geometry,
+                style_function=lambda x: {'fillColor': 'orange', 'color': 'black', 'weight': 1, 'fillOpacity': 0.5}
+            ).add_to(m)
+    except Exception as e:
+        st.error(f"建物データのマップへの追加に失敗しました: {e}")
+
 def add_dem_and_buildings_to_map(m, dem_data, dem_transform, buildings):
     # DEMの等高線を追加
     add_dem_to_map(m, dem_data, dem_transform, contour_interval=100)
@@ -361,9 +379,7 @@ def add_dem_and_buildings_to_map(m, dem_data, dem_transform, buildings):
     # 建物を追加
     add_buildings_to_map(m, buildings)
 
-# ─────────────────────────────────────────────────────────────────────────
 # Streamlitメイン表示
-# ─────────────────────────────────────────────────────────────────────────
 st.title("防災スピーカ音圧ヒートマップ（地形・建物考慮版）")
 
 # DEMデータのアップロード
@@ -397,16 +413,18 @@ if uploaded_dem and uploaded_buildings:
 
     # 初回ヒートマップ計算
     if st.session_state.heatmap_data is None and st.session_state.speakers:
-        st.session_state.heatmap_data, st.session_state.contours, sound_grid_smoothed = calculate_heatmap_and_contours_with_obstruction(
-            st.session_state.speakers,
-            st.session_state.L0,
-            st.session_state.r_max,
-            grid_lat,
-            grid_lon,
-            buildings,
-            dem_data,
-            dem_transform
-        )
+        with st.spinner("音圧計算中..."):
+            st.session_state.heatmap_data, st.session_state.contours, sound_grid_smoothed = calculate_heatmap_and_contours_with_obstruction(
+                st.session_state.speakers,
+                st.session_state.L0,
+                st.session_state.r_max,
+                grid_lat,
+                grid_lon,
+                buildings,
+                dem_data,
+                dem_transform
+            )
+        st.success("音圧計算が完了しました。")
 
     # Foliumマップ生成
     m = folium.Map(
@@ -514,20 +532,27 @@ if uploaded_dem and uploaded_buildings:
 
             # ヒートマップ再計算
             if st.session_state.speakers and uploaded_dem and uploaded_buildings:
-                st.session_state.heatmap_data, st.session_state.contours, sound_grid_smoothed = calculate_heatmap_and_contours_with_obstruction(
-                    st.session_state.speakers,
-                    st.session_state.L0,
-                    st.session_state.r_max,
-                    grid_lat,
-                    grid_lon,
-                    buildings,
-                    dem_data,
-                    dem_transform
-                )
+                with st.spinner("ヒートマップ再計算中..."):
+                    st.session_state.heatmap_data, st.session_state.contours, sound_grid_smoothed = calculate_heatmap_and_contours_with_obstruction(
+                        st.session_state.speakers,
+                        st.session_state.L0,
+                        st.session_state.r_max,
+                        grid_lat,
+                        grid_lon,
+                        buildings,
+                        dem_data,
+                        dem_transform
+                    )
+                st.success("ヒートマップと等高線を再計算しました。")
 
-    # ─────────────────────────────────────────────────────────────────────────
-    # 操作パネル
-    # ─────────────────────────────────────────────────────────────────────────
+# データのアップロードが完了していない場合
+else:
+    st.warning("DEMデータと建物データをサイドバーからアップロードしてください。")
+
+# ─────────────────────────────────────────────────────────────────────────
+# 操作パネル
+# ─────────────────────────────────────────────────────────────────────────
+if uploaded_dem and uploaded_buildings:
     st.subheader("操作パネル")
 
     # CSVアップロード
@@ -538,18 +563,19 @@ if uploaded_dem and uploaded_buildings:
             st.session_state.speakers.extend(speakers_loaded)
         if measurements_loaded:
             st.session_state.measurements.extend(measurements_loaded)
-        if uploaded_dem and uploaded_buildings:
-            st.session_state.heatmap_data, st.session_state.contours, sound_grid_smoothed = calculate_heatmap_and_contours_with_obstruction(
-                st.session_state.speakers,
-                st.session_state.L0,
-                st.session_state.r_max,
-                grid_lat,
-                grid_lon,
-                buildings,
-                dem_data,
-                dem_transform
-            )
-        st.success("CSVを読み込み、ヒートマップを更新しました。")
+        if st.session_state.speakers:
+            with st.spinner("音圧計算中..."):
+                st.session_state.heatmap_data, st.session_state.contours, sound_grid_smoothed = calculate_heatmap_and_contours_with_obstruction(
+                    st.session_state.speakers,
+                    st.session_state.L0,
+                    st.session_state.r_max,
+                    grid_lat,
+                    grid_lon,
+                    buildings,
+                    dem_data,
+                    dem_transform
+                )
+            st.success("CSVを読み込み、ヒートマップを更新しました。")
 
     # 新規スピーカ追加
     st.markdown("### 新しいスピーカを追加")
@@ -570,16 +596,17 @@ if uploaded_dem and uploaded_buildings:
             else:
                 st.session_state.speakers.append([lat_spk, lon_spk, dirs_spk])
                 if uploaded_dem and uploaded_buildings:
-                    st.session_state.heatmap_data, st.session_state.contours, sound_grid_smoothed = calculate_heatmap_and_contours_with_obstruction(
-                        st.session_state.speakers,
-                        st.session_state.L0,
-                        st.session_state.r_max,
-                        grid_lat,
-                        grid_lon,
-                        buildings,
-                        dem_data,
-                        dem_transform
-                    )
+                    with st.spinner("音圧計算中..."):
+                        st.session_state.heatmap_data, st.session_state.contours, sound_grid_smoothed = calculate_heatmap_and_contours_with_obstruction(
+                            st.session_state.speakers,
+                            st.session_state.L0,
+                            st.session_state.r_max,
+                            grid_lat,
+                            grid_lon,
+                            buildings,
+                            dem_data,
+                            dem_transform
+                        )
                 st.success(f"スピーカを追加しました: ({lat_spk}, {lon_spk}), 方向={', '.join([f'{d}°' for d in dirs_spk])}")
         except Exception as e:
             st.error(f"入力エラー: {e}")
@@ -603,16 +630,17 @@ if uploaded_dem and uploaded_buildings:
             material = material_input.strip()
             st.session_state.measurements.append([lat_m, lon_m, db_m, material])
             if uploaded_dem and uploaded_buildings:
-                st.session_state.heatmap_data, st.session_state.contours, sound_grid_smoothed = calculate_heatmap_and_contours_with_obstruction(
-                    st.session_state.speakers,
-                    st.session_state.L0,
-                    st.session_state.r_max,
-                    grid_lat,
-                    grid_lon,
-                    buildings,
-                    dem_data,
-                    dem_transform
-                )
+                with st.spinner("音圧計算中..."):
+                    st.session_state.heatmap_data, st.session_state.contours, sound_grid_smoothed = calculate_heatmap_and_contours_with_obstruction(
+                        st.session_state.speakers,
+                        st.session_state.L0,
+                        st.session_state.r_max,
+                        grid_lat,
+                        grid_lon,
+                        buildings,
+                        dem_data,
+                        dem_transform
+                    )
             st.success(f"計測値を追加しました: ({lat_m}, {lon_m}), {db_m} dB, 材質={material}")
         except Exception as e:
             st.error(f"入力エラー: {e}")
@@ -681,16 +709,17 @@ if uploaded_dem and uploaded_buildings:
     # 更新ボタン: ヒートマップ再計算
     if st.button("ヒートマップを更新"):
         if st.session_state.speakers and uploaded_dem and uploaded_buildings:
-            st.session_state.heatmap_data, st.session_state.contours, sound_grid_smoothed = calculate_heatmap_and_contours_with_obstruction(
-                st.session_state.speakers,
-                st.session_state.L0,
-                st.session_state.r_max,
-                grid_lat,
-                grid_lon,
-                buildings,
-                dem_data,
-                dem_transform
-            )
+            with st.spinner("ヒートマップ再計算中..."):
+                st.session_state.heatmap_data, st.session_state.contours, sound_grid_smoothed = calculate_heatmap_and_contours_with_obstruction(
+                    st.session_state.speakers,
+                    st.session_state.L0,
+                    st.session_state.r_max,
+                    grid_lat,
+                    grid_lon,
+                    buildings,
+                    dem_data,
+                    dem_transform
+                )
             st.success("ヒートマップと等高線を再計算しました")
         else:
             st.error("スピーカがありません。または、DEM・建物データをアップロードしてください。")
@@ -718,5 +747,3 @@ if uploaded_dem and uploaded_buildings:
         f'<div style="width:100%; text-align:center;">{color_scale._repr_html_()}</div>',
         unsafe_allow_html=True
     )
-else:
-    st.warning("DEMデータと建物データをサイドバーからアップロードしてください。")
