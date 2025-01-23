@@ -192,7 +192,10 @@ def calculate_heatmap_and_contours_with_obstruction(speakers, L0, r_max, grid_la
     Nx, Ny = grid_lat.shape
     sound_grid = np.full((Nx, Ny), np.nan, dtype=float)
 
-    # 各グリッドポイントで音圧を計算
+    # プログレスバーの設定
+    progress_bar = st.progress(0)
+    total = Nx
+
     for i in range(Nx):
         for j in range(Ny):
             lat = grid_lat[i, j]
@@ -200,6 +203,8 @@ def calculate_heatmap_and_contours_with_obstruction(speakers, L0, r_max, grid_la
             db = calc_theoretical_db_with_obstruction(lat, lon, speakers, L0, r_max, buildings, dem_data, dem_transform)
             if db is not None:
                 sound_grid[i, j] = db
+        # プログレスバーの更新
+        progress_bar.progress((i + 1) / total)
 
     # データの滑らかさを向上
     sound_grid_smoothed = gaussian_filter(sound_grid, sigma=1)
@@ -440,7 +445,7 @@ def add_dem_and_buildings_to_map(m, dem_data, dem_transform, buildings):
 # ヒートマップの再計算関数
 def recalculate_heatmap():
     try:
-        if ("dem_data" in st.session_state and st.session_state.dem_data is not None and
+        if ("dem_data" in st.session_state and st.session_state.dem_data.size > 0 and
             "buildings" in st.session_state and not st.session_state.buildings.empty and
             "grid_lat" in st.session_state and "grid_lon" in st.session_state):
 
@@ -677,27 +682,23 @@ if uploaded_dem and uploaded_buildings:
     else:
         st.sidebar.error("建物データの読み込みに失敗しました。")
 
-    # 地図用グリッドの設定
+    # 地図用グリッドの設定（解像度を下げて計算負荷を軽減）
     lat_min = st.session_state.map_center[0] - 0.01
     lat_max = st.session_state.map_center[0] + 0.01
     lon_min = st.session_state.map_center[1] - 0.01
     lon_max = st.session_state.map_center[1] + 0.01
 
-    zoom_factor = 200 + (st.session_state.map_zoom - 14) * 30  # グリッド解像度の調整
-    zoom_factor = min(max(200, zoom_factor), 1000)  # 最低200、最高1000に設定
+    # グリッド解像度を下げる（例: 100x100）
+    grid_size = 100
     grid_lat, grid_lon = np.meshgrid(
-        np.linspace(lat_min, lat_max, zoom_factor),
-        np.linspace(lon_min, lon_max, zoom_factor)
+        np.linspace(lat_min, lat_max, grid_size),
+        np.linspace(lon_min, lon_max, grid_size)
     )
     grid_lat = grid_lat.T
     grid_lon = grid_lon.T
 
     st.session_state.grid_lat = grid_lat
     st.session_state.grid_lon = grid_lon
-
-    # 初回ヒートマップ計算
-    if st.session_state.heatmap_data is None and st.session_state.speakers:
-        recalculate_heatmap()
 
     # Foliumマップ生成
     m = folium.Map(
@@ -768,20 +769,41 @@ if uploaded_dem and uploaded_buildings:
             icon=folium.Icon(icon="info-circle", prefix="fa", color="green")
         ).add_to(m)
 
-    # ヒートマップ・等高線
-    if st.session_state.heatmap_data:
-        HeatMap(
-            st.session_state.heatmap_data,
-            radius=getattr(st.session_state, 'heatmap_radius', 15),
-            blur=getattr(st.session_state, 'heatmap_blur', 20),
-            min_opacity=getattr(st.session_state, 'heatmap_min_opacity', 0.4),
-            gradient=getattr(st.session_state, 'heatmap_gradient', {0.2: 'blue', 0.4: 'green', 0.6: 'yellow', 0.8: 'red'})
-        ).add_to(m)
+    # ヒートマップ・等高線はボタン操作で追加
+    if st.button("ヒートマップを計算して追加"):
+        if st.session_state.speakers:
+            with st.spinner("ヒートマップを計算中..."):
+                heat_data, contours, sound_grid_smoothed = calculate_heatmap_and_contours_with_obstruction(
+                    st.session_state.speakers,
+                    st.session_state.L0,
+                    st.session_state.r_max,
+                    st.session_state.grid_lat,
+                    st.session_state.grid_lon,
+                    st.session_state.buildings,
+                    st.session_state.dem_data,
+                    st.session_state.dem_transform
+                )
+                st.session_state.heatmap_data = heat_data
+                st.session_state.contours = contours
 
-    for key, level in {"L0-20dB": st.session_state.L0 - 20, "L0-1dB": st.session_state.L0 - 1}.items():
-        for contour in st.session_state.contours.get(key, []):
-            color = "green" if key == "L0-20dB" else "red"
-            folium.PolyLine(locations=contour, color=color, weight=2).add_to(m)
+            # ヒートマップをマップに追加
+            HeatMap(
+                st.session_state.heatmap_data,
+                radius=getattr(st.session_state, 'heatmap_radius', 15),
+                blur=getattr(st.session_state, 'heatmap_blur', 20),
+                min_opacity=getattr(st.session_state, 'heatmap_min_opacity', 0.4),
+                gradient=getattr(st.session_state, 'heatmap_gradient', {0.2: 'blue', 0.4: 'green', 0.6: 'yellow', 0.8: 'red'})
+            ).add_to(m)
+
+            # 等高線をマップに追加
+            for key, contour_list in st.session_state.contours.items():
+                color = "green" if key == "L0-20dB" else "red"
+                for contour in contour_list:
+                    folium.PolyLine(locations=contour, color=color, weight=2).add_to(m)
+
+            st.success("ヒートマップと等高線をマップに追加しました。")
+        else:
+            st.error("スピーカーが登録されていません。スピーカーを追加してください。")
 
     # マップに描画ツールを追加
     draw = Draw(
@@ -798,37 +820,14 @@ if uploaded_dem and uploaded_buildings:
     )
     draw.add_to(m)
 
-    # マップをStreamlitに表示し、移動状況を取得
-    st_data = st_folium(m, width=700, height=500, returned_objects=["center", "zoom", "all_drawings"])
-    if st_data:
-        if "center" in st_data:
-            st.session_state.map_center = [st_data["center"]["lat"], st_data["center"]["lng"]]
-        if "zoom" in st_data:
-            st.session_state.map_zoom = st_data["zoom"]
-            # グリッドを再生成
-            lat_min = st.session_state.map_center[0] - 0.01
-            lat_max = st.session_state.map_center[0] + 0.01
-            lon_min = st.session_state.map_center[1] - 0.01
-            lon_max = st.session_state.map_center[1] + 0.01
+    # マップをStreamlitに表示
+    st_map = st_folium(m, width=700, height=500)
 
-            zoom_factor = 200 + (st.session_state.map_zoom - 14) * 30
-            zoom_factor = min(max(200, zoom_factor), 1000)
-            grid_lat, grid_lon = np.meshgrid(
-                np.linspace(lat_min, lat_max, zoom_factor),
-                np.linspace(lon_min, lon_max, zoom_factor)
-            )
-            grid_lat = grid_lat.T
-            grid_lon = grid_lon.T
+    # 地図の表示が完了したら、必要に応じて中心座標とズームレベルを更新
+    if st_map and "center" in st_map and "zoom" in st_map:
+        st.session_state.map_center = [st_map["center"]["lat"], st_map["center"]["lng"]]
+        st.session_state.map_zoom = st_map["zoom"]
 
-            st.session_state.grid_lat = grid_lat
-            st.session_state.grid_lon = grid_lon
-
-            # ヒートマップ再計算
-            if st.session_state.speakers and "dem_data" in st.session_state and st.session_state.dem_data is not None and \
-               "buildings" in st.session_state and not st.session_state.buildings.empty:
-                recalculate_heatmap()
-
-# データのアップロードが完了していない場合
 else:
     st.warning("DEMデータと建物データをサイドバーからアップロードしてください。")
 
@@ -850,7 +849,7 @@ if uploaded_dem and uploaded_buildings:
             st.session_state.measurements.extend(measurements_loaded)
             st.success(f"{len(measurements_loaded)} 件の計測値を追加しました。")
         if st.session_state.speakers:
-            recalculate_heatmap()
+            st.button("ヒートマップを計算して追加")
 
     # スピーカーおよび計測値の管理
     manage_entities()
@@ -873,9 +872,8 @@ if uploaded_dem and uploaded_buildings:
                 st.warning("少なくとも1つの方向を指定してください。")
             else:
                 st.session_state.speakers.append({"lat": lat_spk, "lon": lon_spk, "directions": dirs_spk})
-                if uploaded_dem and uploaded_buildings:
-                    recalculate_heatmap()
                 st.success(f"スピーカを追加しました: ({lat_spk}, {lon_spk}), 方向={', '.join([f'{d}°' for d in dirs_spk])}")
+                st.button("ヒートマップを計算して追加")
         except Exception as e:
             st.error(f"入力エラー: {e}")
 
@@ -897,9 +895,8 @@ if uploaded_dem and uploaded_buildings:
             db_m = float(db_input.strip())
             material = material_input.strip()
             st.session_state.measurements.append({"lat": lat_m, "lon": lon_m, "db": db_m, "material": material})
-            if uploaded_dem and uploaded_buildings:
-                recalculate_heatmap()
             st.success(f"計測値を追加しました: ({lat_m}, {lon_m}), {db_m} dB, 材質={material}")
+            st.button("ヒートマップを計算して追加")
         except Exception as e:
             st.error(f"入力エラー: {e}")
 
@@ -935,23 +932,19 @@ if uploaded_dem and uploaded_buildings:
     with col1:
         if st.button("スピーカをリセット"):
             st.session_state.speakers = []
-            if uploaded_dem and uploaded_buildings:
-                recalculate_heatmap()
+            st.session_state.heatmap_data = None
+            st.session_state.contours = {key: [] for key in required_contour_keys}
             st.success("スピーカをリセットしました。ヒートマップを更新しました。")
     with col2:
         if st.button("計測値をリセット"):
             st.session_state.measurements = []
-            if uploaded_dem and uploaded_buildings:
-                recalculate_heatmap()
+            st.session_state.heatmap_data = None
+            st.session_state.contours = {key: [] for key in required_contour_keys}
             st.success("計測値をリセットしました。ヒートマップを更新しました。")
 
     # 更新ボタン: ヒートマップ再計算
-    if st.button("ヒートマップを更新"):
-        if st.session_state.speakers and "dem_data" in st.session_state and st.session_state.dem_data is not None and \
-           "buildings" in st.session_state and not st.session_state.buildings.empty:
-            recalculate_heatmap()
-        else:
-            st.error("スピーカがありません。または、DEM・建物データをアップロードしてください。")
+    if st.button("ヒートマップを計算して追加"):
+        recalculate_heatmap()
 
     # エクスポート
     st.markdown("### CSVのエクスポート (種別/緯度/経度/データ1..4形式)")
