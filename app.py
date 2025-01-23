@@ -196,6 +196,33 @@ with st.form(key="controls"):
         else:
             st.error("スピーカーが存在しません。")
 
+# 計測値の表示
+st.subheader("計測値の一覧")
+
+# 列を分けて理論値と実測値を表示
+if st.session_state.measurements:
+    table_data = []
+    for lat, lon, meas_db in st.session_state.measurements:
+        # 理論値の計算
+        if st.session_state.heatmap_data is not None:
+            theoretical_value = calculate_heatmap_and_contours(
+                st.session_state.speakers, st.session_state.L0, st.session_state.r_max, np.array([[lat]]), np.array([[lon]])
+            )[0][0][2]  # 理論値を取得
+        else:
+            theoretical_value = "N/A"
+
+        table_data.append({
+            "緯度": f"{lat:.6f}",
+            "経度": f"{lon:.6f}",
+            "実測値 (dB)": f"{meas_db:.2f}",
+            "理論値 (dB)": f"{theoretical_value:.2f}" if theoretical_value != "N/A" else "N/A"
+        })
+
+    st.table(table_data)
+else:
+    st.write("計測値がまだ追加されていません。")
+
+
 
 # 凡例バーを表示
 st.subheader("音圧レベルの凡例")
