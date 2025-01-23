@@ -147,45 +147,45 @@ if st_data:
         st.session_state.map_zoom = st_data["zoom"]
 
 # 操作パネル
-st.subheader("操作パネル")
-uploaded_file = st.file_uploader("スピーカーと計測値のCSVファイルをアップロード", type=["csv"])
+st.sidebar.header("操作パネル")
+uploaded_file = st.sidebar.file_uploader("スピーカーと計測値のCSVファイルをアップロード", type=["csv"])
 if uploaded_file:
     speakers, measurements = load_csv(uploaded_file)
     if speakers:
         st.session_state.speakers.extend(speakers)
     if measurements:
         st.session_state.measurements.extend(measurements)
-    st.success("CSVファイルを読み込みました")
+    st.sidebar.success("CSVファイルを読み込みました")
 
 # スピーカー追加
-new_speaker = st.text_input("新しいスピーカー (緯度,経度,方向1,方向2...)", placeholder="例: 34.2579,133.2072,N,E")
-if st.button("スピーカーを追加"):
+new_speaker = st.sidebar.text_input("新しいスピーカー (緯度,経度,方向1,方向2...)", placeholder="例: 34.2579,133.2072,N,E")
+if st.sidebar.button("スピーカーを追加"):
     try:
         parts = new_speaker.split(",")
         lat, lon = float(parts[0]), float(parts[1])
         directions = [parse_direction_to_degrees(d) for d in parts[2:]]
         st.session_state.speakers.append([lat, lon, directions])
         st.session_state.heatmap_data = None
-        st.success(f"スピーカーを追加しました: ({lat}, {lon}), 方向: {directions}")
+        st.sidebar.success(f"スピーカーを追加しました: ({lat}, {lon}), 方向: {directions}")
     except ValueError:
-        st.error("入力形式が正しくありません")
+        st.sidebar.error("入力形式が正しくありません")
 
 # ヒートマップ更新
-if st.button("更新"):
+if st.sidebar.button("更新"):
     if st.session_state.speakers:
         st.session_state.heatmap_data, st.session_state.contours = calculate_heatmap_and_contours(
             st.session_state.speakers, st.session_state.L0, st.session_state.r_max, grid_lat, grid_lon
         )
-        st.success("ヒートマップと等高線を更新しました")
+        st.sidebar.success("ヒートマップと等高線を更新しました")
     else:
-        st.error("スピーカーが存在しません")
+        st.sidebar.error("スピーカーが存在しません")
 
 # 凡例バーを表示
-st.subheader("音圧レベルの凡例")
+st.sidebar.subheader("音圧レベルの凡例")
 colormap = cm.LinearColormap(
     colors=["blue", "green", "yellow", "red"],
     vmin=st.session_state.L0 - 40,
     vmax=st.session_state.L0,
     caption="音圧レベル (dB)"
 )
-st.markdown(f'<div style="width:100%; text-align:center;">{colormap._repr_html_()}</div>', unsafe_allow_html=True)
+st.sidebar.markdown(f'<div style="width:100%; text-align:center;">{colormap._repr_html_()}</div>', unsafe_allow_html=True)
