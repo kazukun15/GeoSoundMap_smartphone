@@ -8,6 +8,7 @@ from skimage import measure
 import pandas as pd
 import branca.colormap as cm
 import io  # エクスポート用バッファ
+from scipy.ndimage import gaussian_filter  # データの滑らかさ向上
 
 # ─────────────────────────────────────────────────────────────────────────
 # セッション初期設定
@@ -150,18 +151,54 @@ def calculate_heatmap_and_contours(speakers, L0, r_max, grid_lat, grid_lon):
     sound_grid[non_zero_mask] = 10 * np.log10(power_sum[non_zero_mask])
     sound_grid = np.clip(sound_grid, L0 - 40, L0)
 
+    # データの滑らかさを向上
+    sound_grid_smoothed = gaussian_filter(sound_grid, sigma=1)
+    fill_grid = np.where(np.isnan(sound_grid_smoothed), -9999, sound_grid_smoothed)
+
     # ヒートマップ用データの効率的な生成
-    valid_indices = ~np.isnan(sound_grid)
-    heat_data = np.column_stack((grid_lat[valid_indices], grid_lon[valid_indices], sound_grid[valid_indices])).tolist()
+    valid_indices = ~np.isnan(sound_grid_smoothed)
+    heat_data = np.column_stack((grid_lat[valid_indices], grid_lon[valid_indices], sound_grid_smoothed[valid_indices])).tolist()
 
     # 等高線(L0-20dB, L0-1dB)
-    fill_grid = np.where(np.isnan(sound_grid), -9999, sound_grid)
     contours = {"L0-20dB": [], "L0-1dB": []}
-    levels = {"L0-20dB": L0 - 20, "L0-1dB": L0 - 1}  # 修正: L0dB を L0-1dB に変更
+    levels = {"L0-20dB": L0 - 20, "L0-1dB": L0 - 1}
+
+    # データ範囲の確認
+    min_db = np.nanmin(sound_grid_smoothed)
+    max_db = np.nanmax(sound_grid_smoothed)
+    st.write(f"Sound Grid Min: {min_db:.2f} dB")
+    st.write(f"Sound Grid Max: {max_db:.2f} dB")
+
     for key, level in levels.items():
+        # レベルがデータ範囲内か確認
+        if not (min_db <= level <= max_db):
+            st.warning(f"{key} のレベル {level}dB はデータ範囲外です。")
+            continue
+
         raw_contours = measure.find_contours(fill_grid, level=level)
         if not raw_contours:
-            st.warning(f"{key}の等高線が見つかりませんでした。レベルを調整してください。")
+            # 近似レベルで再試行
+            adjusted_level = level - 0.5  # 例として0.5dB下げる
+            if min_db <= adjusted_level <= max_db:
+                raw_contours = measure.find_contours(fill_grid, level=adjusted_level)
+                if raw_contours:
+                    st.warning(f"{key} の等高線が見つかりませんでした。近似レベル {adjusted_level:.1f}dB で再試行しました。")
+                    key_adjusted = f"{key}-approx"
+                    contours[key_adjusted] = []
+                    for contour in raw_contours:
+                        lat_lon_contour = []
+                        for y, x in contour:
+                            iy, ix = int(round(y)), int(round(x))
+                            if 0 <= iy < Nx and 0 <= ix < Ny:
+                                lat_lon_contour.append((grid_lat[iy, ix], grid_lon[iy, ix]))
+                        if len(lat_lon_contour) > 1:
+                            contours[key_adjusted].append(lat_lon_contour)
+                else:
+                    st.warning(f"{key} の近似レベルでも等高線が見つかりませんでした。")
+            else:
+                st.warning(f"{key} の近似レベル {adjusted_level:.1f}dB はデータ範囲外です。")
+            continue
+
         for contour in raw_contours:
             lat_lon_contour = []
             for y, x in contour:
@@ -266,8 +303,8 @@ lat_max = st.session_state.map_center[0] + 0.01
 lon_min = st.session_state.map_center[1] - 0.01
 lon_max = st.session_state.map_center[1] + 0.01
 
-zoom_factor = 100 + (st.session_state.map_zoom - 14) * 20
-zoom_factor = max(100, zoom_factor)  # グリッドの解像度を最低100に設定
+zoom_factor = 200 + (st.session_state.map_zoom - 14) * 30  # グリッド解像度の調整
+zoom_factor = min(max(200, zoom_factor), 1000)  # 最低200、最高1000に設定
 grid_lat, grid_lon = np.meshgrid(
     np.linspace(lat_min, lat_max, zoom_factor),
     np.linspace(lon_min, lon_max, zoom_factor)
@@ -352,7 +389,7 @@ if st.session_state.heatmap_data:
     ).add_to(m)
 
 for key, level in {"L0-20dB": st.session_state.L0 - 20, "L0-1dB": st.session_state.L0 - 1}.items():
-    for contour in st.session_state.contours[key]:
+    for contour in st.session_state.contours.get(key, []):
         color = "green" if key == "L0-20dB" else "red"
         folium.PolyLine(locations=contour, color=color, weight=2).add_to(m)
 
@@ -369,8 +406,8 @@ if st_data:
         lon_min = st.session_state.map_center[1] - 0.01
         lon_max = st.session_state.map_center[1] + 0.01
 
-        zoom_factor = 100 + (st.session_state.map_zoom - 14) * 20
-        zoom_factor = max(100, zoom_factor)
+        zoom_factor = 200 + (st.session_state.map_zoom - 14) * 30
+        zoom_factor = min(max(200, zoom_factor), 1000)
         grid_lat, grid_lon = np.meshgrid(
             np.linspace(lat_min, lat_max, zoom_factor),
             np.linspace(lon_min, lon_max, zoom_factor)
