@@ -2,82 +2,67 @@ import streamlit as st
 import folium
 from folium.plugins import HeatMap
 from streamlit_folium import st_folium
+import pandas as pd
 import numpy as np
 import math
 from skimage import measure
 import branca.colormap as cm
 
-# 初期設定
+# Initial setup
 if "map_center" not in st.session_state:
     st.session_state.map_center = [34.25741795269067, 133.20450105700033]
-
 if "map_zoom" not in st.session_state:
-    st.session_state.map_zoom = 14  # 初期ズームレベル
-
+    st.session_state.map_zoom = 14
 if "speakers" not in st.session_state:
     st.session_state.speakers = [[34.25741795269067, 133.20450105700033, [0.0, 90.0]]]
-
 if "measurements" not in st.session_state:
-    st.session_state.measurements = []  # 計測値リスト
-
+    st.session_state.measurements = []
 if "heatmap_data" not in st.session_state:
     st.session_state.heatmap_data = None
-
 if "contours" not in st.session_state:
     st.session_state.contours = {"60dB": [], "80dB": []}
-
 if "L0" not in st.session_state:
-    st.session_state.L0 = 80  # 初期音圧レベル
-
+    st.session_state.L0 = 80
 if "r_max" not in st.session_state:
-    st.session_state.r_max = 500  # 初期伝播距離
+    st.session_state.r_max = 500
 
-# 方角の変換
-DIRECTION_MAPPING = {
-    "N": 0, "E": 90, "S": 180, "W": 270,
-    "NE": 45, "SE": 135, "SW": 225, "NW": 315
-}
+# Direction conversion
+DIRECTION_MAPPING = {"N": 0, "E": 90, "S": 180, "W": 270, "NE": 45, "SE": 135, "SW": 225, "NW": 315}
 
 def parse_direction_to_degrees(direction_str):
-    """方角文字列を角度に変換"""
     direction_str = direction_str.strip().upper()
     if direction_str in DIRECTION_MAPPING:
         return DIRECTION_MAPPING[direction_str]
-    return float(direction_str)  # 数値の場合そのまま返す
+    return float(direction_str)
 
-# 音圧ヒートマップと等高線の計算
+# Heatmap and contour calculation
 def calculate_heatmap_and_contours(speakers, L0, r_max, grid_lat, grid_lon):
     Nx, Ny = grid_lat.shape
     power_sum = np.zeros((Nx, Ny))
-
-    # ベクトル計算でスピーカーごとの寄与を効率的に加算
     grid_coords = np.stack([grid_lat.ravel(), grid_lon.ravel()], axis=1)
 
     for spk in speakers:
         lat, lon, dirs = spk
         spk_coords = np.array([lat, lon])
-        distances = np.sqrt(np.sum((grid_coords - spk_coords) ** 2, axis=1)) * 111320  # 距離を計算 (メートル換算)
-        distances[distances < 1] = 1  # 最小距離を1mに設定
+        distances = np.sqrt(np.sum((grid_coords - spk_coords)**2, axis=1)) * 111320
+        distances[distances < 1] = 1
 
-        # スピーカーの指向性を計算
         bearings = np.degrees(np.arctan2(grid_coords[:, 1] - lon, grid_coords[:, 0] - lat)) % 360
         power = np.zeros_like(distances)
 
         for direction in dirs:
             angle_diff = np.abs(bearings - direction) % 360
             angle_diff = np.minimum(angle_diff, 360 - angle_diff)
-            directivity_factor = np.clip(1 - angle_diff / 180, 0, 1)  # 指向性の減衰を適用
-            power += directivity_factor * 10 ** ((L0 - 20 * np.log10(distances)) / 10)
+            directivity_factor = np.clip(1 - angle_diff / 180, 0, 1)
+            power += directivity_factor * 10**((L0 - 20 * np.log10(distances)) / 10)
 
-        # 距離制限を適用
         power[distances > r_max] = 0
         power_sum += power.reshape(Nx, Ny)
 
     sound_grid = 10 * np.log10(power_sum, where=(power_sum > 0), out=np.full_like(power_sum, np.nan))
-    sound_grid = np.clip(sound_grid, L0 - 40, L0)  # 範囲外の値をクリップ
+    sound_grid = np.clip(sound_grid, L0 - 40, L0)
     heat_data = [[grid_lat[i, j], grid_lon[i, j], sound_grid[i, j]] for i in range(Nx) for j in range(Ny) if not np.isnan(sound_grid[i, j])]
 
-    # 等高線を計算 (60dB, 80dB)
     contours = {"60dB": [], "80dB": []}
     levels = {"60dB": 60, "80dB": 80}
     cgrid = np.where(np.isnan(sound_grid), -9999, sound_grid)
@@ -89,74 +74,68 @@ def calculate_heatmap_and_contours(speakers, L0, r_max, grid_lat, grid_lon):
 
     return heat_data, contours
 
-# 地図表示設定
+# CSV import/export
+def import_csv(file):
+    try:
+        data = pd.read_csv(file)
+        speakers = []
+        measurements = []
+
+        for _, row in data.iterrows():
+            if not pd.isna(row["Speaker_Lat"]):
+                dirs = [parse_direction_to_degrees(row[f"Direction{i}"]) for i in range(1, 4) if not pd.isna(row[f"Direction{i}"])]
+                speakers.append([row["Speaker_Lat"], row["Speaker_Lon"], dirs])
+
+            if not pd.isna(row["Measurement_Lat"]):
+                measurements.append([row["Measurement_Lat"], row["Measurement_Lon"], row["Measured_dB"]])
+
+        return speakers, measurements
+    except Exception as e:
+        st.error(f"CSV読み込みエラー: {e}")
+        return None, None
+
+def export_csv(speakers, measurements):
+    data = []
+    for spk in speakers:
+        data.append({"Speaker_Lat": spk[0], "Speaker_Lon": spk[1], "Direction1": spk[2][0] if len(spk[2]) > 0 else None,
+                     "Direction2": spk[2][1] if len(spk[2]) > 1 else None, "Direction3": spk[2][2] if len(spk[2]) > 2 else None,
+                     "Measurement_Lat": None, "Measurement_Lon": None, "Measured_dB": None})
+    for meas in measurements:
+        data.append({"Speaker_Lat": None, "Speaker_Lon": None, "Direction1": None, "Direction2": None, "Direction3": None,
+                     "Measurement_Lat": meas[0], "Measurement_Lon": meas[1], "Measured_dB": meas[2]})
+
+    return pd.DataFrame(data)
+
+# Map display
 st.title("音圧ヒートマップ表示 - 防災スピーカー")
-lat_min, lat_max = st.session_state.map_center[0] - 0.01, st.session_state.map_center[0] + 0.01
-lon_min, lon_max = st.session_state.map_center[1] - 0.01, st.session_state.map_center[1] + 0.01
-
-# ズームレベルに応じた分割数を調整
-zoom_factor = 100 + (st.session_state.map_zoom - 14) * 20
-grid_lat, grid_lon = np.meshgrid(np.linspace(lat_min, lat_max, zoom_factor), np.linspace(lon_min, lon_max, zoom_factor))
-
 if st.session_state.heatmap_data is None and st.session_state.speakers:
+    lat_min, lat_max = st.session_state.map_center[0] - 0.01, st.session_state.map_center[0] + 0.01
+    lon_min, lon_max = st.session_state.map_center[1] - 0.01, st.session_state.map_center[1] + 0.01
+    zoom_factor = 100 + (st.session_state.map_zoom - 14) * 20
+    grid_lat, grid_lon = np.meshgrid(np.linspace(lat_min, lat_max, zoom_factor), np.linspace(lon_min, lon_max, zoom_factor))
     st.session_state.heatmap_data, st.session_state.contours = calculate_heatmap_and_contours(
         st.session_state.speakers, st.session_state.L0, st.session_state.r_max, grid_lat, grid_lon
     )
 
 m = folium.Map(location=st.session_state.map_center, zoom_start=st.session_state.map_zoom)
-
-# スピーカーのマーカー
 for spk in st.session_state.speakers:
     lat, lon, dirs = spk
     popup_text = f"スピーカー: ({lat:.6f}, {lon:.6f})<br>初期音圧レベル: {st.session_state.L0} dB<br>最大伝播距離: {st.session_state.r_max} m"
     folium.Marker(location=[lat, lon], popup=folium.Popup(popup_text, max_width=300), icon=folium.Icon(color="blue")).add_to(m)
-
-# ヒートマップの追加
 if st.session_state.heatmap_data:
     HeatMap(st.session_state.heatmap_data, radius=15, blur=20, min_opacity=0.4).add_to(m)
+st_folium(m, width=700, height=500)
 
-# 地図を表示
-st_data = st_folium(m, width=700, height=500, returned_objects=["center", "zoom"])
-
-# 操作パネル
+# Operation panel
 st.subheader("操作パネル")
-with st.form(key="controls"):
-    st.write("スピーカーの設定")
-    col1, col2 = st.columns(2)
+uploaded_file = st.file_uploader("CSVをインポート", type=["csv"])
+if uploaded_file is not None:
+    speakers, measurements = import_csv(uploaded_file)
+    if speakers is not None and measurements is not None:
+        st.session_state.speakers = speakers
+        st.session_state.measurements = measurements
+        st.success("CSVファイルをインポートしました！")
 
-    # スピーカー追加
-    with col1:
-        new_speaker = st.text_input("新しいスピーカー (緯度,経度,方向1,方向2...)", placeholder="例: 34.2579,133.2072,N,E")
-        if st.form_submit_button("スピーカーを追加"):
-            try:
-                parts = new_speaker.split(",")
-                lat, lon = float(parts[0]), float(parts[1])
-                directions = [parse_direction_to_degrees(d) for d in parts[2:]]
-                st.session_state.speakers.append([lat, lon, directions])
-                st.session_state.heatmap_data = None
-                st.success(f"スピーカーを追加しました: ({lat}, {lon}), 方向: {directions}")
-            except ValueError:
-                st.error("入力形式が正しくありません")
-
-    # スピーカーリセット
-    with col2:
-        if st.form_submit_button("スピーカーをリセット"):
-            st.session_state.speakers = []
-            st.session_state.heatmap_data = None
-            st.session_state.contours = {"60dB": [], "80dB": []}
-            st.success("スピーカーをリセットしました")
-
-    # 音圧設定
-    st.write("音圧設定")
-    st.session_state.L0 = st.slider("初期音圧レベル (dB)", 50, 100, st.session_state.L0)
-    st.session_state.r_max = st.slider("最大伝播距離 (m)", 100, 2000, st.session_state.r_max)
-
-    # ヒートマップ更新
-    if st.form_submit_button("更新"):
-        if st.session_state.speakers:
-            st.session_state.heatmap_data, st.session_state.contours = calculate_heatmap_and_contours(
-                st.session_state.speakers, st.session_state.L0, st.session_state.r_max, grid_lat, grid_lon
-            )
-            st.success("ヒートマップと等高線を更新しました")
-        else:
-            st.error("スピーカーが存在しません。")
+if st.button("CSVをエクスポート"):
+    df = export_csv(st.session_state.speakers, st.session_state.measurements)
+    st.download_button("ダウンロード", df.to_csv(index=False), "data.csv", "text/csv")
