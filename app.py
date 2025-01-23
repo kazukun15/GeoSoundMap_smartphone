@@ -228,7 +228,7 @@ def calculate_heatmap_and_contours(speakers, L0, r_max, grid_lat, grid_lon):
     return heat_data, contours
 
 # ─────────────────────────────────────────────────────────────────────────
-# CSVインポート (種別/緯度/経度/データ1..3 形式)
+# CSVインポート (種別/緯度/経度/データ1..4 形式)
 # ─────────────────────────────────────────────────────────────────────────
 def load_csv(file):
     try:
@@ -243,6 +243,7 @@ def load_csv(file):
             d1 = row.get("データ1", None)
             d2 = row.get("データ2", None)
             d3 = row.get("データ3", None)
+            material = row.get("データ4", "Unknown")  # 材質情報をデータ4として仮定。欠落時は "Unknown"
 
             if pd.isna(lat) or pd.isna(lon):
                 continue
@@ -263,7 +264,6 @@ def load_csv(file):
                 speakers.append([lat, lon, directions])
             elif item_type == "計測値":
                 db_val = 0.0
-                material = row.get("データ4", "")  # 材質情報をデータ4として仮定
                 if not pd.isna(d1):
                     try:
                         db_val = float(d1)
@@ -277,7 +277,7 @@ def load_csv(file):
         return [], []
 
 # ─────────────────────────────────────────────────────────────────────────
-# CSVエクスポート (種別/緯度/経度/データ1..3 形式)
+# CSVエクスポート (種別/緯度/経度/データ1..4 形式)
 # ─────────────────────────────────────────────────────────────────────────
 def export_to_csv(speakers, measurements):
     columns = ["種別","緯度","経度","データ1","データ2","データ3","データ4"]
@@ -351,7 +351,8 @@ m = folium.Map(
 # ─────────────────────────────────────────────────────────────────────────
 # スピーカー・ピン配置 (アイコンとフォント調整)
 # ─────────────────────────────────────────────────────────────────────────
-for lat_s, lon_s, dirs in st.session_state.speakers:
+for spk in st.session_state.speakers:
+    lat_s, lon_s, dirs = spk
     directions_str = ", ".join([f"{dir}°" for dir in dirs])
     popup_html = f"""
     <div style="font-size:14px;">
@@ -371,6 +372,9 @@ for lat_s, lon_s, dirs in st.session_state.speakers:
 # 計測値・ピン配置 (アイコン+理論値と家内音圧をポップアップに追加表示)
 # ─────────────────────────────────────────────────────────────────────────
 for measurement in st.session_state.measurements:
+    if len(measurement) != 4:
+        st.warning(f"計測値が不完全です: {measurement}. '材質' を 'Unknown' に設定します。")
+        measurement += ["Unknown"]  # デフォルト材質を追加
     lat_m, lon_m, db_m, material = measurement
     # 理論値を計算
     theoretical_db = calc_theoretical_db_for_point(
