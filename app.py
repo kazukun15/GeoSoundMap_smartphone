@@ -45,8 +45,15 @@ if "L0" not in st.session_state:
 if "r_max" not in st.session_state:
     st.session_state.r_max = 500  # 最大伝播距離
 
-# 家の中での音圧レベルの減衰量
-ATTENUATION_INSIDE_DB = 10  # dB
+# 建築材質とその音減衰率（dB）の定義
+MATERIAL_ATTENUATION = {
+    "コンクリート": 30,  # 例: コンクリート壁は30dB減衰
+    "木材": 20,         # 例: 木製壁は20dB減衰
+    "ガラス": 25,       # 例: ガラス窓は25dB減衰
+    "断熱材": 35,       # 例: 断熱材は35dB減衰
+    "石膏ボード": 28,   # 例: 石膏ボード壁は28dB減衰
+    # 必要に応じて追加
+}
 
 # 方角文字列→角度に変換
 DIRECTION_MAPPING = {
@@ -63,6 +70,15 @@ def parse_direction_to_degrees(direction_str):
     except ValueError:
         st.error(f"方向の指定 '{direction_str}' を数値に変換できません。0度として扱います。")
         return 0.0
+
+# 家の中での音圧レベルの計算を関数内で行う
+def calc_indoor_db(theoretical_db, material):
+    """
+    理論音圧から材質ごとの減衰量を引いて家内音圧を計算します。
+    """
+    attenuation = MATERIAL_ATTENUATION.get(material, 10)  # デフォルト10dB
+    indoor_db = theoretical_db - attenuation
+    return max(indoor_db, st.session_state.L0 - 40)  # 最小値はL0-40dBにクリップ
 
 # ─────────────────────────────────────────────────────────────────────────
 # 特定1地点での音圧理論値(dB)を計算する関数
@@ -247,12 +263,13 @@ def load_csv(file):
                 speakers.append([lat, lon, directions])
             elif item_type == "計測値":
                 db_val = 0.0
+                material = row.get("データ4", "")  # 材質情報をデータ4として仮定
                 if not pd.isna(d1):
                     try:
                         db_val = float(d1)
                     except ValueError:
                         db_val = 0.0
-                measurements.append([lat, lon, db_val])
+                measurements.append([lat, lon, db_val, material])
 
         return speakers, measurements
     except Exception as e:
@@ -263,7 +280,7 @@ def load_csv(file):
 # CSVエクスポート (種別/緯度/経度/データ1..3 形式)
 # ─────────────────────────────────────────────────────────────────────────
 def export_to_csv(speakers, measurements):
-    columns = ["種別","緯度","経度","データ1","データ2","データ3"]
+    columns = ["種別","緯度","経度","データ1","データ2","データ3","データ4"]
     rows = []
 
     for lat, lon, dirs in speakers:
@@ -274,10 +291,11 @@ def export_to_csv(speakers, measurements):
             "データ1": dirs[0] if len(dirs) > 0 else "",
             "データ2": dirs[1] if len(dirs) > 1 else "",
             "データ3": dirs[2] if len(dirs) > 2 else "",
+            "データ4": ""  # スピーカには材質情報がない
         }
         rows.append(row)
 
-    for lat_m, lon_m, db_m in measurements:
+    for lat_m, lon_m, db_m, material in measurements:
         row = {
             "種別": "計測値",
             "緯度": lat_m,
@@ -285,6 +303,7 @@ def export_to_csv(speakers, measurements):
             "データ1": db_m,
             "データ2": "",
             "データ3": "",
+            "データ4": material,
         }
         rows.append(row)
 
@@ -351,7 +370,8 @@ for lat_s, lon_s, dirs in st.session_state.speakers:
 # ─────────────────────────────────────────────────────────────────────────
 # 計測値・ピン配置 (アイコン+理論値と家内音圧をポップアップに追加表示)
 # ─────────────────────────────────────────────────────────────────────────
-for lat_m, lon_m, db_m in st.session_state.measurements:
+for measurement in st.session_state.measurements:
+    lat_m, lon_m, db_m, material = measurement
     # 理論値を計算
     theoretical_db = calc_theoretical_db_for_point(
         lat_m, lon_m,
@@ -362,18 +382,19 @@ for lat_m, lon_m, db_m in st.session_state.measurements:
     if theoretical_db is not None:
         theo_str = f"{theoretical_db:.2f} dB"
         # 家内音圧の計算
-        inside_db = theoretical_db - ATTENUATION_INSIDE_DB
-        inside_str = f"{inside_db:.2f} dB"
+        indoor_db = calc_indoor_db(theoretical_db, material)
+        indoor_str = f"{indoor_db:.2f} dB"
     else:
         theo_str = "N/A"
-        inside_str = "N/A"
+        indoor_str = "N/A"
 
     popup_html = f"""
     <div style="font-size:14px;">
       <b>計測位置:</b> ({lat_m:.6f}, {lon_m:.6f})<br>
       <b>計測値:</b> {db_m:.2f} dB<br>
       <b>理論値:</b> {theo_str}<br>
-      <b>家内音圧:</b> {inside_str}
+      <b>家内音圧:</b> {indoor_str}<br>
+      <b>材質:</b> {material}
     </div>
     """
 
@@ -437,7 +458,7 @@ if st_data:
 st.subheader("操作パネル")
 
 # CSVアップロード
-uploaded_file = st.file_uploader("CSVをアップロード (種別/緯度/経度/データ1..3列)", type=["csv"])
+uploaded_file = st.file_uploader("CSVをアップロード (種別/緯度/経度/データ1..4列)", type=["csv"])
 if uploaded_file:
     speakers_loaded, measurements_loaded = load_csv(uploaded_file)
     if speakers_loaded:
@@ -482,18 +503,24 @@ if st.button("スピーカを追加"):
     except Exception as e:
         st.error(f"入力エラー: {e}")
 
-# 新規計測値追加
+# 新規計測値追加（ドロップダウンメニュー使用）
 st.markdown("### 新しい計測値を追加")
-new_measurement = st.text_input("計測値の追加 (緯度, 経度, dB)", placeholder="例: 34.2578,133.2075,75")
+col1, col2, col3, col4 = st.columns(4)
+with col1:
+    lat_input = st.text_input("緯度", placeholder="例: 34.2578")
+with col2:
+    lon_input = st.text_input("経度", placeholder="例: 133.2075")
+with col3:
+    db_input = st.text_input("dB", placeholder="例: 75")
+with col4:
+    material_input = st.selectbox("材質", list(MATERIAL_ATTENUATION.keys()))
 if st.button("計測値を追加"):
     try:
-        items = new_measurement.split(",")
-        if len(items) < 3:
-            raise ValueError("緯度、経度、dBはすべて必須です。")
-        lat_m = float(items[0].strip())
-        lon_m = float(items[1].strip())
-        db_m = float(items[2].strip())
-        st.session_state.measurements.append([lat_m, lon_m, db_m])
+        lat_m = float(lat_input.strip())
+        lon_m = float(lon_input.strip())
+        db_m = float(db_input.strip())
+        material = material_input.strip()
+        st.session_state.measurements.append([lat_m, lon_m, db_m, material])
         st.session_state.heatmap_data, st.session_state.contours = calculate_heatmap_and_contours(
             st.session_state.speakers,
             st.session_state.L0,
@@ -501,7 +528,7 @@ if st.button("計測値を追加"):
             grid_lat,
             grid_lon
         )
-        st.success(f"計測値を追加しました: ({lat_m}, {lon_m}), {db_m} dB")
+        st.success(f"計測値を追加しました: ({lat_m}, {lon_m}), {db_m} dB, 材質={material}")
     except Exception as e:
         st.error(f"入力エラー: {e}")
 
@@ -556,7 +583,7 @@ if st.button("ヒートマップを更新"):
         st.error("スピーカがありません。追加してください。")
 
 # エクスポート
-st.subheader("CSVのエクスポート (種別/緯度/経度/データ1..3形式)")
+st.subheader("CSVのエクスポート (種別/緯度/経度/データ1..4形式)")
 if st.button("CSVをエクスポート"):
     csv_data = export_to_csv(st.session_state.speakers, st.session_state.measurements)
     st.download_button(
