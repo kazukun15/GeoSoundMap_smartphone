@@ -52,16 +52,17 @@ if "L0" not in st.session_state:
 if "r_max" not in st.session_state:
     st.session_state.r_max = 500  # 最大伝播距離(m)
 
-# 建築材質とその音減衰率（dB）の定義
-MATERIAL_ATTENUATION = {
-    "コンクリート": 30,  # 例: コンクリート壁は30dB減衰
-    "木材": 20,         # 例: 木製壁は20dB減衰
-    "ガラス": 25,       # 例: ガラス窓は25dB減衰
-    "断熱材": 35,       # 例: 断熱材は35dB減衰
-    "石膏ボード": 28,   # 例: 石膏ボード壁は28dB減衰
-    "Unknown": 10,      # 不明な材質の場合
-    # 必要に応じて追加
-}
+# 建築材質とその音減衰率（dB）の定義を session_state に移行
+if "MATERIAL_ATTENUATION" not in st.session_state:
+    st.session_state.MATERIAL_ATTENUATION = {
+        "コンクリート": 30,  # 例: コンクリート壁は30dB減衰
+        "木材": 20,         # 例: 木製壁は20dB減衰
+        "ガラス": 25,       # 例: ガラス窓は25dB減衰
+        "断熱材": 35,       # 例: 断熱材は35dB減衰
+        "石膏ボード": 28,   # 例: 石膏ボード壁は28dB減衰
+        "Unknown": 10,      # 不明な材質の場合
+        # 必要に応じて追加
+    }
 
 # 方角文字列→角度に変換
 DIRECTION_MAPPING = {
@@ -84,7 +85,7 @@ def calc_indoor_db(theoretical_db, material):
     """
     理論音圧から材質ごとの減衰量を引いて家内音圧を計算します。
     """
-    attenuation = MATERIAL_ATTENUATION.get(material, 10)  # デフォルト10dB
+    attenuation = st.session_state.MATERIAL_ATTENUATION.get(material, 10)  # デフォルト10dB
     indoor_db = theoretical_db - attenuation
     return max(indoor_db, st.session_state.L0 - 40)  # 最小値はL0-40dBにクリップ
 
@@ -481,7 +482,7 @@ def manage_entities():
                 with cols[2]:
                     new_db = st.text_input(f"dB", value=str(meas['db']), key=f"meas_db_{idx}")
                 with cols[3]:
-                    new_material = st.selectbox(f"材質", list(MATERIAL_ATTENUATION.keys()), index=list(MATERIAL_ATTENUATION.keys()).index(meas['material']) if meas['material'] in MATERIAL_ATTENUATION else 0, key=f"meas_material_{idx}")
+                    new_material = st.selectbox(f"材質", list(st.session_state.MATERIAL_ATTENUATION.keys()), index=list(st.session_state.MATERIAL_ATTENUATION.keys()).index(meas['material']) if meas['material'] in st.session_state.MATERIAL_ATTENUATION else 0, key=f"meas_material_{idx}")
                 cols_del = st.columns(2)
                 with cols_del[0]:
                     if st.button("更新", key=f"update_meas_{idx}"):
@@ -504,9 +505,9 @@ def manage_entities():
 # ヒートマップの詳細設定
 def heatmap_settings():
     st.markdown("### ヒートマップの設定")
-    radius = st.slider("ヒートマップの半径", min_value=1, max_value=50, value=15, step=1)
-    blur = st.slider("ヒートマップのブラー", min_value=1, max_value=50, value=20, step=1)
-    min_opacity = st.slider("ヒートマップの最小不透明度", min_value=0.0, max_value=1.0, value=0.4, step=0.1)
+    radius = st.slider("ヒートマップの半径", min_value=1, max_value=50, value=getattr(st.session_state, 'heatmap_radius', 15), step=1)
+    blur = st.slider("ヒートマップのブラー", min_value=1, max_value=50, value=getattr(st.session_state, 'heatmap_blur', 20), step=1)
+    min_opacity = st.slider("ヒートマップの最小不透明度", min_value=0.0, max_value=1.0, value=getattr(st.session_state, 'heatmap_min_opacity', 0.4), step=0.1)
     st.session_state.heatmap_radius = radius
     st.session_state.heatmap_blur = blur
     st.session_state.heatmap_min_opacity = min_opacity
@@ -529,7 +530,7 @@ def save_load_state():
             state = {
                 "speakers": st.session_state.speakers,
                 "measurements": st.session_state.measurements,
-                "materials": MATERIAL_ATTENUATION,
+                "materials": st.session_state.MATERIAL_ATTENUATION,
                 "L0": st.session_state.L0,
                 "r_max": st.session_state.r_max
             }
@@ -543,8 +544,7 @@ def save_load_state():
                     state = json.loads(st.session_state.saved_state)
                     st.session_state.speakers = state.get("speakers", [])
                     st.session_state.measurements = state.get("measurements", [])
-                    global MATERIAL_ATTENUATION
-                    MATERIAL_ATTENUATION = state.get("materials", MATERIAL_ATTENUATION)
+                    st.session_state.MATERIAL_ATTENUATION = state.get("materials", st.session_state.MATERIAL_ATTENUATION)
                     st.session_state.L0 = state.get("L0", st.session_state.L0)
                     st.session_state.r_max = state.get("r_max", st.session_state.r_max)
                     st.success("保存された状態を読み込みました。ヒートマップを更新してください。")
@@ -559,7 +559,7 @@ def filter_measurements():
     if st.session_state.measurements:
         min_db = st.number_input("最小dB値", value=st.session_state.L0 - 40, step=1)
         max_db = st.number_input("最大dB値", value=st.session_state.L0, step=1)
-        selected_materials = st.multiselect("表示する材質", options=list(MATERIAL_ATTENUATION.keys()), default=list(MATERIAL_ATTENUATION.keys()))
+        selected_materials = st.multiselect("表示する材質", options=list(st.session_state.MATERIAL_ATTENUATION.keys()), default=list(st.session_state.MATERIAL_ATTENUATION.keys()))
 
         filtered_measurements = [
             meas for meas in st.session_state.measurements
@@ -889,7 +889,7 @@ if uploaded_dem and uploaded_buildings:
     with col3:
         db_input = st.text_input("dB", placeholder="例: 75")
     with col4:
-        material_input = st.selectbox("材質", list(MATERIAL_ATTENUATION.keys()))
+        material_input = st.selectbox("材質", list(st.session_state.MATERIAL_ATTENUATION.keys()))
     if st.button("計測値を追加"):
         try:
             lat_m = float(lat_input.strip())
@@ -922,10 +922,10 @@ if uploaded_dem and uploaded_buildings:
         new_attenuation = st.number_input("減衰量 (dB)", min_value=0, max_value=100, step=1)
     if st.button("材質を追加"):
         if new_material and new_attenuation:
-            if new_material in MATERIAL_ATTENUATION:
+            if new_material in st.session_state.MATERIAL_ATTENUATION:
                 st.warning(f"材質 '{new_material}' は既に存在します。")
             else:
-                MATERIAL_ATTENUATION[new_material] = new_attenuation
+                st.session_state.MATERIAL_ATTENUATION[new_material] = new_attenuation
                 st.success(f"材質 '{new_material}' を追加しました。減衰量: {new_attenuation} dB")
         else:
             st.error("材質名と減衰量を入力してください。")
