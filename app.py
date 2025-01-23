@@ -45,6 +45,29 @@ def parse_direction_to_degrees(direction_str):
         return DIRECTION_MAPPING[direction_str]
     return float(direction_str)  # 数値の場合そのまま返す
 
+def calculate_theoretical_value(speakers, L0, r_max, lat, lon):
+    """計測地点での理論値を計算"""
+    total_power = 0
+    for spk in speakers:
+        s_lat, s_lon, dirs = spk
+        distance = math.sqrt((lat - s_lat) ** 2 + (lon - s_lon) ** 2) * 111320
+        if distance < 1: 
+            distance = 1
+        if distance > r_max:
+            continue
+        
+        for direction in dirs:
+            bearing = math.degrees(math.atan2(lon - s_lon, lat - s_lat)) % 360
+            angle_diff = abs(bearing - direction) % 360
+            angle_diff = min(angle_diff, 360 - angle_diff)
+            directivity_factor = max(0, 1 - angle_diff / 180)
+            power = directivity_factor * 10 ** ((L0 - 20 * math.log10(distance)) / 10)
+            total_power += power
+    
+    if total_power == 0:
+        return None
+    return 10 * math.log10(total_power)
+
 # 音圧ヒートマップと等高線の計算
 def calculate_heatmap_and_contours(speakers, L0, r_max, grid_lat, grid_lon):
     Nx, Ny = grid_lat.shape
@@ -77,8 +100,6 @@ def calculate_heatmap_and_contours(speakers, L0, r_max, grid_lat, grid_lon):
     # 等高線を計算 (60dB, 80dB)
     contours = {"60dB": [], "80dB": []}
     levels = {"60dB": 60, "80dB": 80}
-
-    # 等高線を計算する前にサイズをチェック
     if Nx >= 2 and Ny >= 2:
         cgrid = np.where(np.isnan(sound_grid), -9999, sound_grid)
         for key, level in levels.items():
@@ -114,7 +135,18 @@ for spk in st.session_state.speakers:
 # 計測値のマーカー
 for meas in st.session_state.measurements:
     lat, lon, db = meas
-    folium.Marker(location=[lat, lon], popup=f"計測値: {db} dB", icon=folium.Icon(color="green")).add_to(m)
+    theoretical_value = calculate_theoretical_value(st.session_state.speakers, st.session_state.L0, st.session_state.r_max, lat, lon)
+    popup_content = f"""
+    <div style="font-size:14px; line-height:1.5;">
+        <b>計測値:</b> {db:.2f} dB<br>
+        <b>理論値:</b> {theoretical_value:.2f} dB
+    </div>
+    """
+    folium.Marker(
+        location=[lat, lon],
+        popup=folium.Popup(popup_content, max_width=300),
+        icon=folium.Icon(color="green")
+    ).add_to(m)
 
 # ヒートマップの追加
 if st.session_state.heatmap_data:
@@ -152,7 +184,7 @@ with st.form(key="controls"):
                 lat, lon = float(parts[0]), float(parts[1])
                 directions = [parse_direction_to_degrees(d) for d in parts[2:]]
                 st.session_state.speakers.append([lat, lon, directions])
-                st.session_state.heatmap_data = None  # 再計算フラグを設定
+                st.session_state.heatmap_data = None
                 st.success(f"スピーカーを追加しました: ({lat}, {lon}), 方向: {directions}")
             except ValueError:
                 st.error("入力形式が正しくありません")
@@ -160,8 +192,8 @@ with st.form(key="controls"):
     # スピーカーリセット
     with col2:
         if st.form_submit_button("スピーカーをリセット"):
-            st.session_state.speakers = []  # スピーカーをクリア
-            st.session_state.heatmap_data = None  # ヒートマップもクリア
+            st.session_state.speakers = []
+            st.session_state.heatmap_data = None
             st.session_state.contours = {"60dB": [], "80dB": []}
             st.success("スピーカーをリセットしました")
 
@@ -195,7 +227,6 @@ with st.form(key="controls"):
             st.success("ヒートマップと等高線を更新しました")
         else:
             st.error("スピーカーが存在しません。")
-
 
 # 凡例バーを表示
 st.subheader("音圧レベルの凡例")
