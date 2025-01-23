@@ -9,7 +9,7 @@ from skimage import measure
 import branca.colormap as cm
 import io
 
-# 初期設定
+# ───────────── 初期設定 ───────────── #
 if "map_center" not in st.session_state:
     st.session_state.map_center = [34.25741795269067, 133.20450105700033]
 if "map_zoom" not in st.session_state:
@@ -38,7 +38,7 @@ def parse_direction(direction_str):
         st.error(f"方向 '{direction_str}' を変換できません。0度に設定します。")
         return 0.0
 
-# CSV読み込み
+# ───────────── CSV機能 ───────────── #
 def load_csv(file):
     try:
         df = pd.read_csv(file)
@@ -62,7 +62,7 @@ def export_csv(data, columns):
     df.to_csv(buffer, index=False)
     return buffer.getvalue().encode("utf-8")
 
-# ヒートマップ計算
+# ───────────── ヒートマップ計算 ───────────── #
 def calculate_heatmap(speakers, L0, r_max, grid_lat, grid_lon):
     Nx, Ny = grid_lat.shape
     power_sum = np.zeros((Nx, Ny))
@@ -90,7 +90,7 @@ def calculate_heatmap(speakers, L0, r_max, grid_lat, grid_lon):
     heat_data = [[grid_lat[i, j], grid_lon[i, j], sound_grid[i, j]] for i in range(Nx) for j in range(Ny) if not np.isnan(sound_grid[i, j])]
     return heat_data
 
-# アプリ
+# ───────────── アプリ表示 ───────────── #
 st.title("防災スピーカー音圧可視化マップ")
 
 uploaded_file = st.file_uploader("CSVファイルをアップロード", type=["csv"])
