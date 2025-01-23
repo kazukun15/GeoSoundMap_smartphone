@@ -1,6 +1,6 @@
 import streamlit as st
 import folium
-from folium.plugins import HeatMap
+from folium.plugins import HeatMap, Draw
 from streamlit_folium import st_folium
 import numpy as np
 import math
@@ -11,8 +11,10 @@ import io  # エクスポート用バッファ
 from scipy.ndimage import gaussian_filter  # データの滑らかさ向上
 import geopandas as gpd
 import xml.etree.ElementTree as ET  # XMLパース用
+import json
 
 from shapely.geometry import LineString
+
 from rasterio.transform import Affine
 
 # ─────────────────────────────────────────────────────────────────────────
@@ -26,7 +28,7 @@ if "map_zoom" not in st.session_state:
 
 if "speakers" not in st.session_state:
     st.session_state.speakers = [
-        [34.25741795269067, 133.20450105700033, [0.0, 90.0]]  # 初期スピーカーサンプル
+        {"lat": 34.25741795269067, "lon": 133.20450105700033, "directions": [0.0, 90.0]}  # 初期スピーカーサンプル
     ]
 
 if "measurements" not in st.session_state:
@@ -137,7 +139,8 @@ def calc_theoretical_db_with_obstruction(lat, lon, speakers, L0, r_max, building
     receiver = [lon, lat]  # shapelyでは経度がx, 緯度がy
     power_sum = 0.0
 
-    for spk_lat, spk_lon, spk_dirs in speakers:
+    for spk in speakers:
+        spk_lat, spk_lon, spk_dirs = spk["lat"], spk["lon"], spk["directions"]
         speaker = [spk_lon, spk_lat]  # shapelyでは経度がx, 緯度がy
 
         # 距離の計算
@@ -339,7 +342,7 @@ def load_csv(file):
                 for d in [d1, d2, d3]:
                     if not pd.isna(d) and str(d).strip() != "":
                         directions.append(parse_direction_to_degrees(str(d)))
-                speakers.append([lat, lon, directions])
+                speakers.append({"lat": lat, "lon": lon, "directions": directions})
             elif item_type == "計測値":
                 db_val = 0.0
                 if not pd.isna(d1):
@@ -347,7 +350,7 @@ def load_csv(file):
                         db_val = float(d1)
                     except ValueError:
                         db_val = 0.0
-                measurements.append([lat, lon, db_val, material])
+                measurements.append({"lat": lat, "lon": lon, "db": db_val, "material": material})
 
         return speakers, measurements
     except Exception as e:
@@ -359,11 +362,12 @@ def export_to_csv(speakers, measurements):
     columns = ["種別","緯度","経度","データ1","データ2","データ3","データ4"]
     rows = []
 
-    for lat, lon, dirs in speakers:
+    for spk in speakers:
+        dirs = spk["directions"]
         row = {
             "種別": "スピーカ",
-            "緯度": lat,
-            "経度": lon,
+            "緯度": spk["lat"],
+            "経度": spk["lon"],
             "データ1": dirs[0] if len(dirs) > 0 else "",
             "データ2": dirs[1] if len(dirs) > 1 else "",
             "データ3": dirs[2] if len(dirs) > 2 else "",
@@ -371,15 +375,15 @@ def export_to_csv(speakers, measurements):
         }
         rows.append(row)
 
-    for lat_m, lon_m, db_m, material in measurements:
+    for meas in measurements:
         row = {
             "種別": "計測値",
-            "緯度": lat_m,
-            "経度": lon_m,
-            "データ1": db_m,
+            "緯度": meas["lat"],
+            "経度": meas["lon"],
+            "データ1": meas["db"],
             "データ2": "",
             "データ3": "",
-            "データ4": material,
+            "データ4": meas["material"],
         }
         rows.append(row)
 
@@ -430,6 +434,189 @@ def add_dem_and_buildings_to_map(m, dem_data, dem_transform, buildings):
 
     # 建物を追加
     add_buildings_to_map(m, buildings)
+
+# スピーカーおよび計測値の編集・削除機能
+def manage_entities():
+    st.markdown("### スピーカーの管理")
+    if st.session_state.speakers:
+        for idx, spk in enumerate(st.session_state.speakers):
+            with st.expander(f"スピーカー {idx+1}: ({spk['lat']}, {spk['lon']})"):
+                cols = st.columns(4)
+                with cols[0]:
+                    new_lat = st.text_input(f"緯度", value=str(spk['lat']), key=f"spk_lat_{idx}")
+                with cols[1]:
+                    new_lon = st.text_input(f"経度", value=str(spk['lon']), key=f"spk_lon_{idx}")
+                with cols[2]:
+                    new_dirs = st.text_input(f"方向 (カンマ区切り)", value=','.join([str(d) for d in spk['directions']]), key=f"spk_dirs_{idx}")
+                with cols[3]:
+                    if st.button("更新", key=f"update_spk_{idx}"):
+                        try:
+                            spk['lat'] = float(new_lat)
+                            spk['lon'] = float(new_lon)
+                            dirs = [parse_direction_to_degrees(d) for d in new_dirs.split(",") if d.strip() != ""]
+                            if dirs:
+                                spk['directions'] = dirs
+                                st.success(f"スピーカー {idx+1} を更新しました。")
+                            else:
+                                st.warning("少なくとも1つの方向を指定してください。")
+                        except ValueError:
+                            st.error("緯度または経度の値が不正です。")
+
+                    if st.button("削除", key=f"delete_spk_{idx}"):
+                        del st.session_state.speakers[idx]
+                        st.success(f"スピーカー {idx+1} を削除しました。")
+                        st.experimental_rerun()
+    else:
+        st.info("現在、スピーカーは登録されていません。")
+
+    st.markdown("### 計測値の管理")
+    if st.session_state.measurements:
+        for idx, meas in enumerate(st.session_state.measurements):
+            with st.expander(f"計測値 {idx+1}: ({meas['lat']}, {meas['lon']})"):
+                cols = st.columns(4)
+                with cols[0]:
+                    new_lat = st.text_input(f"緯度", value=str(meas['lat']), key=f"meas_lat_{idx}")
+                with cols[1]:
+                    new_lon = st.text_input(f"経度", value=str(meas['lon']), key=f"meas_lon_{idx}")
+                with cols[2]:
+                    new_db = st.text_input(f"dB", value=str(meas['db']), key=f"meas_db_{idx}")
+                with cols[3]:
+                    new_material = st.selectbox(f"材質", list(MATERIAL_ATTENUATION.keys()), index=list(MATERIAL_ATTENUATION.keys()).index(meas['material']) if meas['material'] in MATERIAL_ATTENUATION else 0, key=f"meas_material_{idx}")
+                cols_del = st.columns(2)
+                with cols_del[0]:
+                    if st.button("更新", key=f"update_meas_{idx}"):
+                        try:
+                            meas['lat'] = float(new_lat)
+                            meas['lon'] = float(new_lon)
+                            meas['db'] = float(new_db)
+                            meas['material'] = new_material
+                            st.success(f"計測値 {idx+1} を更新しました。")
+                        except ValueError:
+                            st.error("緯度、経度、またはdBの値が不正です。")
+                with cols_del[1]:
+                    if st.button("削除", key=f"delete_meas_{idx}"):
+                        del st.session_state.measurements[idx]
+                        st.success(f"計測値 {idx+1} を削除しました。")
+                        st.experimental_rerun()
+    else:
+        st.info("現在、計測値は登録されていません。")
+
+# ヒートマップの詳細設定
+def heatmap_settings():
+    st.markdown("### ヒートマップの設定")
+    radius = st.slider("ヒートマップの半径", min_value=1, max_value=50, value=15, step=1)
+    blur = st.slider("ヒートマップのブラー", min_value=1, max_value=50, value=20, step=1)
+    min_opacity = st.slider("ヒートマップの最小不透明度", min_value=0.0, max_value=1.0, value=0.4, step=0.1)
+    st.session_state.heatmap_radius = radius
+    st.session_state.heatmap_blur = blur
+    st.session_state.heatmap_min_opacity = min_opacity
+
+    st.markdown("#### カラーレジェンドのカスタマイズ")
+    color_choice = st.multiselect("色の順序を選択", options=["blue", "green", "yellow", "red"], default=["blue", "green", "yellow", "red"])
+    if len(color_choice) >= 2:
+        st.session_state.heatmap_gradient = {i/(len(color_choice)-1): color for i, color in enumerate(color_choice)}
+    else:
+        st.warning("少なくとも2色を選択してください。デフォルトのグラデーションを使用します。")
+        st.session_state.heatmap_gradient = {0.2: 'blue', 0.4: 'green', 0.6: 'yellow', 0.8: 'red'}
+
+# アプリケーションの状態保存と読み込み
+def save_load_state():
+    st.markdown("### アプリケーションの状態管理")
+    save_load_choice = st.selectbox("操作を選択", ["保存", "読み込み"])
+
+    if save_load_choice == "保存":
+        if st.button("現在の状態を保存"):
+            state = {
+                "speakers": st.session_state.speakers,
+                "measurements": st.session_state.measurements,
+                "materials": MATERIAL_ATTENUATION,
+                "L0": st.session_state.L0,
+                "r_max": st.session_state.r_max
+            }
+            st.session_state.saved_state = json.dumps(state)
+            st.success("現在の状態を保存しました。")
+
+    elif save_load_choice == "読み込み":
+        if "saved_state" in st.session_state:
+            if st.button("保存された状態を読み込む"):
+                try:
+                    state = json.loads(st.session_state.saved_state)
+                    st.session_state.speakers = state.get("speakers", [])
+                    st.session_state.measurements = state.get("measurements", [])
+                    global MATERIAL_ATTENUATION
+                    MATERIAL_ATTENUATION = state.get("materials", MATERIAL_ATTENUATION)
+                    st.session_state.L0 = state.get("L0", st.session_state.L0)
+                    st.session_state.r_max = state.get("r_max", st.session_state.r_max)
+                    st.success("保存された状態を読み込みました。ヒートマップを更新してください。")
+                except json.JSONDecodeError:
+                    st.error("保存された状態の読み込みに失敗しました。")
+        else:
+            st.info("保存された状態がありません。")
+
+# フィルタリング機能
+def filter_measurements():
+    st.markdown("### 計測値のフィルタリング")
+    if st.session_state.measurements:
+        min_db = st.number_input("最小dB値", value=st.session_state.L0 - 40, step=1)
+        max_db = st.number_input("最大dB値", value=st.session_state.L0, step=1)
+        selected_materials = st.multiselect("表示する材質", options=list(MATERIAL_ATTENUATION.keys()), default=list(MATERIAL_ATTENUATION.keys()))
+
+        filtered_measurements = [
+            meas for meas in st.session_state.measurements
+            if min_db <= meas["db"] <= max_db and meas["material"] in selected_materials
+        ]
+
+        st.session_state.filtered_measurements = filtered_measurements
+        st.write(f"フィルタリング後の計測値: {len(filtered_measurements)} 件")
+
+        return filtered_measurements
+    else:
+        st.info("現在、計測値は登録されていません。")
+        return []
+
+# ヘルプセクション
+def help_section():
+    st.markdown("### ヘルプ")
+    st.markdown("""
+    **防災スピーカ音圧ヒートマップアプリケーションへようこそ！**
+
+    - **データのアップロード**
+        - サイドバーからXML形式のDEMデータとGeoJSON形式の建物データをアップロードしてください。
+
+    - **スピーカーの追加**
+        - 新しいスピーカーを手動で追加するか、CSVファイルからインポートできます。
+
+    - **計測値の追加**
+        - 計測位置の緯度・経度、dB値、材質を入力して新しい計測値を追加できます。
+
+    - **材質の管理**
+        - 音圧減衰量を指定して新しい材質を追加できます。
+
+    - **スピーカーおよび計測値の管理**
+        - 既存のスピーカーや計測値を編集・削除できます。
+
+    - **ヒートマップの設定**
+        - ヒートマップの視覚的なパラメータを調整できます。
+
+    - **アプリケーションの状態管理**
+        - 現在の設定を保存し、後で読み込むことができます。
+
+    - **計測値のフィルタリング**
+        - dB値や材質に基づいて計測値をフィルタリングできます。
+
+    - **CSVのエクスポート**
+        - スピーカーと計測値をCSVファイルとしてエクスポートできます。
+
+    **操作手順**
+    1. 必要なデータをアップロードします。
+    2. スピーカーや計測値を追加・管理します。
+    3. ヒートマップの設定を調整します。
+    4. ヒートマップを更新して結果を確認します。
+    5. 必要に応じてデータをエクスポートします。
+
+    **サポート**
+    問題が発生した場合や質問がある場合は、サポートまでお問い合わせください。
+    """)
 
 # Streamlitメイン表示
 st.title("防災スピーカ音圧ヒートマップ（地形・建物考慮版）")
@@ -494,8 +681,8 @@ if uploaded_dem and uploaded_buildings:
     add_dem_and_buildings_to_map(m, dem_data, dem_transform, buildings)
 
     # スピーカー・ピン配置 (アイコンとフォント調整)
-    for spk in st.session_state.speakers:
-        lat_s, lon_s, dirs = spk
+    for idx, spk in enumerate(st.session_state.speakers):
+        lat_s, lon_s, dirs = spk["lat"], spk["lon"], spk["directions"]
         directions_str = ", ".join([f"{dir}°" for dir in dirs])
         popup_html = f"""
         <div style="font-size:14px;">
@@ -512,11 +699,12 @@ if uploaded_dem and uploaded_buildings:
         ).add_to(m)
 
     # 計測値・ピン配置 (アイコン+理論値と家内音圧をポップアップに追加表示)
-    for measurement in st.session_state.measurements:
-        if len(measurement) != 4:
-            st.warning(f"計測値が不完全です: {measurement}. '材質' を 'Unknown' に設定します。")
-            measurement += ["Unknown"]  # デフォルト材質を追加
-        lat_m, lon_m, db_m, material = measurement
+    filtered_measurements = st.session_state.measurements  # 初期は全て表示
+    if "filtered_measurements" in st.session_state:
+        filtered_measurements = st.session_state.filtered_measurements
+
+    for idx, meas in enumerate(filtered_measurements):
+        lat_m, lon_m, db_m, material = meas["lat"], meas["lon"], meas["db"], meas["material"]
         # 理論値を計算
         theoretical_db = calc_theoretical_db_with_obstruction(
             lat_m, lon_m,
@@ -556,10 +744,10 @@ if uploaded_dem and uploaded_buildings:
     if st.session_state.heatmap_data:
         HeatMap(
             st.session_state.heatmap_data,
-            radius=15,
-            blur=20,
-            min_opacity=0.4,
-            gradient={0.2: 'blue', 0.4: 'green', 0.6: 'yellow', 0.8: 'red'}
+            radius=getattr(st.session_state, 'heatmap_radius', 15),
+            blur=getattr(st.session_state, 'heatmap_blur', 20),
+            min_opacity=getattr(st.session_state, 'heatmap_min_opacity', 0.4),
+            gradient=getattr(st.session_state, 'heatmap_gradient', {0.2: 'blue', 0.4: 'green', 0.6: 'yellow', 0.8: 'red'})
         ).add_to(m)
 
     for key, level in {"L0-20dB": st.session_state.L0 - 20, "L0-1dB": st.session_state.L0 - 1}.items():
@@ -567,8 +755,23 @@ if uploaded_dem and uploaded_buildings:
             color = "green" if key == "L0-20dB" else "red"
             folium.PolyLine(locations=contour, color=color, weight=2).add_to(m)
 
+    # マップに描画ツールを追加
+    draw = Draw(
+        draw_options={
+            "polyline": False,
+            "polygon": False,
+            "circle": False,
+            "rectangle": False,
+            "marker": True,
+            "circlemarker": False,
+        },
+        edit=True,
+        remove=True,
+    )
+    draw.add_to(m)
+
     # マップをStreamlitに表示し、移動状況を取得
-    st_data = st_folium(m, width=700, height=500, returned_objects=["center", "zoom"])
+    st_data = st_folium(m, width=700, height=500, returned_objects=["center", "zoom", "all_drawings"])
     if st_data:
         if "center" in st_data:
             st.session_state.map_center = [st_data["center"]["lat"], st_data["center"]["lng"]]
@@ -615,13 +818,16 @@ if uploaded_dem and uploaded_buildings:
     st.subheader("操作パネル")
 
     # CSVアップロード
+    st.markdown("### CSVのインポート")
     uploaded_file = st.file_uploader("CSVをアップロード (種別/緯度/経度/データ1..4列)", type=["csv"])
     if uploaded_file:
         speakers_loaded, measurements_loaded = load_csv(uploaded_file)
         if speakers_loaded:
             st.session_state.speakers.extend(speakers_loaded)
+            st.success(f"{len(speakers_loaded)} 件のスピーカを追加しました。")
         if measurements_loaded:
             st.session_state.measurements.extend(measurements_loaded)
+            st.success(f"{len(measurements_loaded)} 件の計測値を追加しました。")
         if st.session_state.speakers:
             with st.spinner("音圧計算中..."):
                 st.session_state.heatmap_data, st.session_state.contours, sound_grid_smoothed = calculate_heatmap_and_contours_with_obstruction(
@@ -636,7 +842,10 @@ if uploaded_dem and uploaded_buildings:
                 )
             st.success("CSVを読み込み、ヒートマップを更新しました。")
 
-    # 新規スピーカ追加
+    # スピーカーおよび計測値の管理
+    manage_entities()
+
+    # 新規スピーカー追加
     st.markdown("### 新しいスピーカを追加")
     new_speaker = st.text_input(
         "スピーカの追加 (緯度, 経度, 方向1, 方向2, 方向3)",
@@ -653,7 +862,7 @@ if uploaded_dem and uploaded_buildings:
             if not dirs_spk:
                 st.warning("少なくとも1つの方向を指定してください。")
             else:
-                st.session_state.speakers.append([lat_spk, lon_spk, dirs_spk])
+                st.session_state.speakers.append({"lat": lat_spk, "lon": lon_spk, "directions": dirs_spk})
                 if uploaded_dem and uploaded_buildings:
                     with st.spinner("音圧計算中..."):
                         st.session_state.heatmap_data, st.session_state.contours, sound_grid_smoothed = calculate_heatmap_and_contours_with_obstruction(
@@ -687,7 +896,7 @@ if uploaded_dem and uploaded_buildings:
             lon_m = float(lon_input.strip())
             db_m = float(db_input.strip())
             material = material_input.strip()
-            st.session_state.measurements.append([lat_m, lon_m, db_m, material])
+            st.session_state.measurements.append({"lat": lat_m, "lon": lon_m, "db": db_m, "material": material})
             if uploaded_dem and uploaded_buildings:
                 with st.spinner("音圧計算中..."):
                     st.session_state.heatmap_data, st.session_state.contours, sound_grid_smoothed = calculate_heatmap_and_contours_with_obstruction(
@@ -720,6 +929,15 @@ if uploaded_dem and uploaded_buildings:
                 st.success(f"材質 '{new_material}' を追加しました。減衰量: {new_attenuation} dB")
         else:
             st.error("材質名と減衰量を入力してください。")
+
+    # ヒートマップの詳細設定
+    heatmap_settings()
+
+    # アプリケーションの状態保存と読み込み
+    save_load_state()
+
+    # フィルタリング機能
+    filtered_measurements = filter_measurements()
 
     # リセットボタン
     st.markdown("### データのリセット")
@@ -757,16 +975,6 @@ if uploaded_dem and uploaded_buildings:
                     )
             st.success("計測値をリセットしました。ヒートマップを更新しました。")
 
-    # 音圧/距離スライダー
-    st.markdown("### 音圧と伝播距離の設定")
-    col3, col4 = st.columns(2)
-    with col3:
-        L0 = st.slider("初期音圧レベル (dB)", 50, 100, st.session_state.L0)
-        st.session_state.L0 = L0
-    with col4:
-        r_max = st.slider("最大伝播距離 (m)", 100, 2000, st.session_state.r_max, step=100)
-        st.session_state.r_max = r_max
-
     # 更新ボタン: ヒートマップ再計算
     if st.button("ヒートマップを更新"):
         if st.session_state.speakers and uploaded_dem and uploaded_buildings:
@@ -786,7 +994,7 @@ if uploaded_dem and uploaded_buildings:
             st.error("スピーカがありません。または、DEM・建物データをアップロードしてください。")
 
     # エクスポート
-    st.subheader("CSVのエクスポート (種別/緯度/経度/データ1..4形式)")
+    st.markdown("### CSVのエクスポート (種別/緯度/経度/データ1..4形式)")
     if st.button("CSVをエクスポート"):
         csv_data = export_to_csv(st.session_state.speakers, st.session_state.measurements)
         st.download_button(
@@ -797,7 +1005,7 @@ if uploaded_dem and uploaded_buildings:
         )
 
     # 凡例バー
-    st.subheader("音圧レベルの凡例")
+    st.markdown("### 音圧レベルの凡例")
     color_scale = cm.LinearColormap(
         colors=["blue", "green", "yellow", "red"],
         vmin=st.session_state.L0 - 40,
@@ -808,3 +1016,6 @@ if uploaded_dem and uploaded_buildings:
         f'<div style="width:100%; text-align:center;">{color_scale._repr_html_()}</div>',
         unsafe_allow_html=True
     )
+
+    # ヘルプセクション
+    help_section()
