@@ -14,11 +14,8 @@ if "map_zoom" not in st.session_state:
     st.session_state.map_zoom = 14  # 初期ズームレベル
 
 if "speakers" not in st.session_state:
-    # テスト用に複数スピーカーを追加
-    st.session_state.speakers = [
-        [34.257417 + i * 0.001, 133.204501 + i * 0.001, [0.0, 90.0]]
-        for i in range(100)  # 上島町全体を想定して100個のスピーカーを追加
-    ]
+    # スピーカーの初期値を設定
+    st.session_state.speakers = [[34.25741795269067, 133.20450105700033, [0.0, 90.0]]]
 
 if "measurements" not in st.session_state:
     st.session_state.measurements = []  # 計測値リスト
@@ -87,7 +84,7 @@ lon_min, lon_max = st.session_state.map_center[1] - 0.01, st.session_state.map_c
 zoom_factor = 100 + (st.session_state.map_zoom - 14) * 20
 grid_lat, grid_lon = np.meshgrid(np.linspace(lat_min, lat_max, zoom_factor), np.linspace(lon_min, lon_max, zoom_factor))
 
-if st.session_state.heatmap_data is None:
+if st.session_state.heatmap_data is None and st.session_state.speakers:
     st.session_state.heatmap_data = calculate_heatmap(st.session_state.speakers, st.session_state.L0, st.session_state.r_max, grid_lat, grid_lon)
 
 m = folium.Map(location=st.session_state.map_center, zoom_start=st.session_state.map_zoom)
@@ -104,7 +101,8 @@ for meas in st.session_state.measurements:
     folium.Marker(location=[lat, lon], popup=f"計測値: {db} dB", icon=folium.Icon(color="green")).add_to(m)
 
 # ヒートマップの追加
-HeatMap(st.session_state.heatmap_data, radius=15, blur=20, min_opacity=0.4).add_to(m)
+if st.session_state.heatmap_data:
+    HeatMap(st.session_state.heatmap_data, radius=15, blur=20, min_opacity=0.4).add_to(m)
 
 # 地図を表示
 st_data = st_folium(m, width=700, height=500, returned_objects=["center", "zoom"])
@@ -131,7 +129,7 @@ with st.form(key="controls"):
                 lat, lon = float(parts[0]), float(parts[1])
                 directions = [parse_direction_to_degrees(d) for d in parts[2:]]
                 st.session_state.speakers.append([lat, lon, directions])
-                st.session_state.heatmap_data = None
+                st.session_state.heatmap_data = None  # 再計算フラグを設定
                 st.success(f"スピーカーを追加しました: ({lat}, {lon}), 方向: {directions}")
             except ValueError:
                 st.error("入力形式が正しくありません")
@@ -139,8 +137,8 @@ with st.form(key="controls"):
     # スピーカーリセット
     with col2:
         if st.form_submit_button("スピーカーをリセット"):
-            st.session_state.speakers = []
-            st.session_state.heatmap_data = None
+            st.session_state.speakers = []  # スピーカーをクリア
+            st.session_state.heatmap_data = None  # ヒートマップもクリア
             st.success("スピーカーをリセットしました")
 
     # 計測値の追加
