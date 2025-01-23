@@ -45,6 +45,9 @@ if "L0" not in st.session_state:
 if "r_max" not in st.session_state:
     st.session_state.r_max = 500  # 最大伝播距離
 
+# 家の中での音圧レベルの減衰量
+ATTENUATION_INSIDE_DB = 10  # dB
+
 # 方角文字列→角度に変換
 DIRECTION_MAPPING = {
     "N": 0, "E": 90, "S": 180, "W": 270,
@@ -193,8 +196,6 @@ def calculate_heatmap_and_contours(speakers, L0, r_max, grid_lat, grid_lon):
                                 lat_lon_contour.append((grid_lat[iy, ix], grid_lon[iy, ix]))
                         if len(lat_lon_contour) > 1:
                             contours[key_adjusted].append(lat_lon_contour)
-                else:
-                    st.warning(f"{key} の近似レベルでも等高線が見つかりませんでした。")
             else:
                 st.warning(f"{key} の近似レベル {adjusted_level:.1f}dB はデータ範囲外です。")
             continue
@@ -348,7 +349,7 @@ for lat_s, lon_s, dirs in st.session_state.speakers:
     ).add_to(m)
 
 # ─────────────────────────────────────────────────────────────────────────
-# 計測値・ピン配置 (アイコン+理論値をポップアップに追加表示)
+# 計測値・ピン配置 (アイコン+理論値と家内音圧をポップアップに追加表示)
 # ─────────────────────────────────────────────────────────────────────────
 for lat_m, lon_m, db_m in st.session_state.measurements:
     # 理論値を計算
@@ -360,14 +361,19 @@ for lat_m, lon_m, db_m in st.session_state.measurements:
     )
     if theoretical_db is not None:
         theo_str = f"{theoretical_db:.2f} dB"
+        # 家内音圧の計算
+        inside_db = theoretical_db - ATTENUATION_INSIDE_DB
+        inside_str = f"{inside_db:.2f} dB"
     else:
         theo_str = "N/A"
+        inside_str = "N/A"
 
     popup_html = f"""
     <div style="font-size:14px;">
       <b>計測位置:</b> ({lat_m:.6f}, {lon_m:.6f})<br>
       <b>計測値:</b> {db_m:.2f} dB<br>
-      <b>理論値:</b> {theo_str}
+      <b>理論値:</b> {theo_str}<br>
+      <b>家内音圧:</b> {inside_str}
     </div>
     """
 
