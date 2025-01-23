@@ -29,8 +29,14 @@ if "measurements" not in st.session_state:
 if "heatmap_data" not in st.session_state:
     st.session_state.heatmap_data = None
 
+# contoursの初期化を修正: 必要なキーが存在するか確認し、存在しない場合は追加
+required_contour_keys = ["L0-20dB", "L0dB"]
 if "contours" not in st.session_state:
-    st.session_state.contours = {"L0-20dB": [], "L0dB": []}
+    st.session_state.contours = {key: [] for key in required_contour_keys}
+else:
+    for key in required_contour_keys:
+        if key not in st.session_state.contours:
+            st.session_state.contours[key] = []
 
 if "L0" not in st.session_state:
     st.session_state.L0 = 80  # 初期音圧レベル(dB)
