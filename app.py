@@ -216,8 +216,8 @@ def calculate_heatmap_and_contours_with_obstruction(speakers, L0, r_max, grid_la
     # データ範囲の確認
     min_db = np.nanmin(sound_grid_smoothed)
     max_db = np.nanmax(sound_grid_smoothed)
-    st.write(f"Sound Grid Min: {min_db:.2f} dB")
-    st.write(f"Sound Grid Max: {max_db:.2f} dB")
+    # st.write(f"Sound Grid Min: {min_db:.2f} dB")  # コメントアウト
+    # st.write(f"Sound Grid Max: {max_db:.2f} dB")  # コメントアウト
 
     for key, level in levels.items():
         # レベルがデータ範囲内か確認
@@ -437,6 +437,30 @@ def add_dem_and_buildings_to_map(m, dem_data, dem_transform, buildings):
     # 建物を追加
     add_buildings_to_map(m, buildings)
 
+# ヒートマップの再計算関数
+def recalculate_heatmap():
+    try:
+        if ("dem_data" in st.session_state and st.session_state.dem_data is not None and
+            "buildings" in st.session_state and not st.session_state.buildings.empty and
+            "grid_lat" in st.session_state and "grid_lon" in st.session_state):
+
+            with st.spinner("音圧計算中..."):
+                st.session_state.heatmap_data, st.session_state.contours, sound_grid_smoothed = calculate_heatmap_and_contours_with_obstruction(
+                    st.session_state.speakers,
+                    st.session_state.L0,
+                    st.session_state.r_max,
+                    st.session_state.grid_lat,
+                    st.session_state.grid_lon,
+                    st.session_state.buildings,
+                    st.session_state.dem_data,
+                    st.session_state.dem_transform
+                )
+            st.success("ヒートマップと等高線を再計算しました。")
+        else:
+            st.error("必要なデータが揃っていません。DEMデータと建物データをアップロードしてください。")
+    except Exception as e:
+        st.error(f"ヒートマップの再計算中にエラーが発生しました: {e}")
+
 # スピーカーおよび計測値の編集・削除機能
 def manage_entities():
     st.markdown("### スピーカーの管理")
@@ -459,7 +483,6 @@ def manage_entities():
                             if dirs:
                                 spk['directions'] = dirs
                                 st.success(f"スピーカー {idx+1} を更新しました。")
-                                # ヒートマップの再計算
                                 recalculate_heatmap()
                             else:
                                 st.warning("少なくとも1つの方向を指定してください。")
@@ -486,7 +509,10 @@ def manage_entities():
                 with cols[2]:
                     new_db = st.text_input(f"dB", value=str(meas['db']), key=f"meas_db_{idx}")
                 with cols[3]:
-                    new_material = st.selectbox(f"材質", list(st.session_state.MATERIAL_ATTENUATION.keys()), index=list(st.session_state.MATERIAL_ATTENUATION.keys()).index(meas['material']) if meas['material'] in st.session_state.MATERIAL_ATTENUATION else 0, key=f"meas_material_{idx}")
+                    new_material = st.selectbox(f"材質", list(st.session_state.MATERIAL_ATTENUATION.keys()), 
+                                                index=list(st.session_state.MATERIAL_ATTENUATION.keys()).index(meas['material']) 
+                                                if meas['material'] in st.session_state.MATERIAL_ATTENUATION else 0, 
+                                                key=f"meas_material_{idx}")
                 cols_del = st.columns(2)
                 with cols_del[0]:
                     if st.button("更新", key=f"update_meas_{idx}"):
@@ -496,7 +522,6 @@ def manage_entities():
                             meas['db'] = float(new_db)
                             meas['material'] = new_material
                             st.success(f"計測値 {idx+1} を更新しました。")
-                            # ヒートマップの再計算
                             recalculate_heatmap()
                         except ValueError:
                             st.error("緯度、経度、またはdBの値が不正です。")
@@ -626,22 +651,6 @@ def help_section():
     問題が発生した場合や質問がある場合は、サポートまでお問い合わせください。
     """)
 
-# ヒートマップの再計算関数
-def recalculate_heatmap():
-    if st.session_state.speakers and st.session_state.dem_data is not None and not st.session_state.buildings.empty:
-        with st.spinner("音圧計算中..."):
-            st.session_state.heatmap_data, st.session_state.contours, sound_grid_smoothed = calculate_heatmap_and_contours_with_obstruction(
-                st.session_state.speakers,
-                st.session_state.L0,
-                st.session_state.r_max,
-                st.session_state.grid_lat,
-                st.session_state.grid_lon,
-                st.session_state.buildings,
-                st.session_state.dem_data,
-                st.session_state.dem_transform
-            )
-        st.success("ヒートマップと等高線を再計算しました。")
-
 # Streamlitメイン表示
 st.title("防災スピーカ音圧ヒートマップ（地形・建物考慮版）")
 
@@ -688,18 +697,7 @@ if uploaded_dem and uploaded_buildings:
 
     # 初回ヒートマップ計算
     if st.session_state.heatmap_data is None and st.session_state.speakers:
-        with st.spinner("音圧計算中..."):
-            st.session_state.heatmap_data, st.session_state.contours, sound_grid_smoothed = calculate_heatmap_and_contours_with_obstruction(
-                st.session_state.speakers,
-                st.session_state.L0,
-                st.session_state.r_max,
-                grid_lat,
-                grid_lon,
-                buildings,
-                dem_data,
-                dem_transform
-            )
-        st.success("音圧計算が完了しました。")
+        recalculate_heatmap()
 
     # Foliumマップ生成
     m = folium.Map(
@@ -826,19 +824,9 @@ if uploaded_dem and uploaded_buildings:
             st.session_state.grid_lon = grid_lon
 
             # ヒートマップ再計算
-            if st.session_state.speakers and uploaded_dem and uploaded_buildings:
-                with st.spinner("ヒートマップ再計算中..."):
-                    st.session_state.heatmap_data, st.session_state.contours, sound_grid_smoothed = calculate_heatmap_and_contours_with_obstruction(
-                        st.session_state.speakers,
-                        st.session_state.L0,
-                        st.session_state.r_max,
-                        grid_lat,
-                        grid_lon,
-                        buildings,
-                        dem_data,
-                        dem_transform
-                    )
-                st.success("ヒートマップと等高線を再計算しました。")
+            if st.session_state.speakers and "dem_data" in st.session_state and st.session_state.dem_data is not None and \
+               "buildings" in st.session_state and not st.session_state.buildings.empty:
+                recalculate_heatmap()
 
 # データのアップロードが完了していない場合
 else:
@@ -959,7 +947,8 @@ if uploaded_dem and uploaded_buildings:
 
     # 更新ボタン: ヒートマップ再計算
     if st.button("ヒートマップを更新"):
-        if st.session_state.speakers and uploaded_dem and uploaded_buildings:
+        if st.session_state.speakers and "dem_data" in st.session_state and st.session_state.dem_data is not None and \
+           "buildings" in st.session_state and not st.session_state.buildings.empty:
             recalculate_heatmap()
         else:
             st.error("スピーカがありません。または、DEM・建物データをアップロードしてください。")
