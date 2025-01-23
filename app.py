@@ -13,6 +13,7 @@ import geopandas as gpd
 import xml.etree.ElementTree as ET  # XMLパース用
 
 from shapely.geometry import LineString
+from rasterio.transform import Affine
 
 # ─────────────────────────────────────────────────────────────────────────
 # セッション初期設定
@@ -253,7 +254,7 @@ def calculate_heatmap_and_contours_with_obstruction(speakers, L0, r_max, grid_la
     return heat_data, contours, sound_grid_smoothed
 
 # XML DEMデータの読み込み関数
-@st.cache(allow_output_mutation=True)
+@st.cache_data
 def load_dem_xml(xml_file):
     """
     XML形式のDEMデータを読み込み、NumPy配列とトランスフォーム情報を返します。
@@ -294,7 +295,7 @@ def load_dem_xml(xml_file):
         return np.array([]), None
 
 # 建物データの読み込み関数
-@st.cache(allow_output_mutation=True)
+@st.cache_data
 def load_buildings(buildings_geojson_path):
     """
     GeoJSON形式の建物データを読み込み、GeoDataFrameとして返します。
@@ -745,7 +746,7 @@ if uploaded_dem and uploaded_buildings:
             if uploaded_dem and uploaded_buildings:
                 with st.spinner("音圧計算中..."):
                     st.session_state.heatmap_data, st.session_state.contours, sound_grid_smoothed = calculate_heatmap_and_contours_with_obstruction(
-                        st.session_state.measurements,
+                        st.session_state.speakers,
                         st.session_state.L0,
                         st.session_state.r_max,
                         grid_lat,
