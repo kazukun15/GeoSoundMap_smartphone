@@ -9,9 +9,10 @@ import pandas as pd
 import branca.colormap as cm
 import io  # エクスポート用バッファ
 from scipy.ndimage import gaussian_filter  # データの滑らかさ向上
-import rasterio
-from shapely.geometry import LineString
 import geopandas as gpd
+import xml.etree.ElementTree as ET  # XMLパース用
+
+from shapely.geometry import LineString
 
 # ─────────────────────────────────────────────────────────────────────────
 # セッション初期設定
@@ -251,16 +252,46 @@ def calculate_heatmap_and_contours_with_obstruction(speakers, L0, r_max, grid_la
 
     return heat_data, contours, sound_grid_smoothed
 
-# DEMデータの読み込み関数
+# XML DEMデータの読み込み関数
 @st.cache(allow_output_mutation=True)
-def load_dem(dem_path):
+def load_dem_xml(xml_file):
     """
-    DEMデータを読み込み、NumPy配列とトランスフォーム情報を返します。
+    XML形式のDEMデータを読み込み、NumPy配列とトランスフォーム情報を返します。
+    XMLの具体的な構造に応じて、解析方法を調整してください。
+    ここでは、簡単なグリッド形式のXMLを仮定します。
     """
-    with rasterio.open(dem_path) as dem_dataset:
-        dem_data = dem_dataset.read(1)  # バンド1を取得
-        dem_transform = dem_dataset.transform
-    return dem_data, dem_transform
+    try:
+        tree = ET.parse(xml_file)
+        root = tree.getroot()
+
+        # Grid情報を取得
+        grid = root.find('.//Grid')
+        rows = int(grid.get('rows'))
+        cols = int(grid.get('cols'))
+
+        # Origin情報を取得
+        origin = grid.find('Origin')
+        origin_lat = float(origin.get('lat'))
+        origin_lon = float(origin.get('lon'))
+
+        # CellSizeを取得
+        cell_size = float(grid.find('CellSize').text)
+
+        # Elevation値を取得
+        elevations = []
+        for elev in grid.find('.//Elevations').iter('elevation'):
+            elevations.append(float(elev.text))
+
+        # NumPy配列に変換
+        dem_data = np.array(elevations).reshape((rows, cols))
+
+        # トランスフォーム情報の作成
+        dem_transform = Affine.translation(origin_lon, origin_lat) * Affine.scale(cell_size, cell_size)
+
+        return dem_data, dem_transform
+    except Exception as e:
+        st.error(f"XML DEMデータの読み込み中にエラーが発生しました: {e}")
+        return np.array([]), None
 
 # 建物データの読み込み関数
 @st.cache(allow_output_mutation=True)
@@ -404,17 +435,23 @@ st.title("防災スピーカ音圧ヒートマップ（地形・建物考慮版�
 
 # DEMデータのアップロード
 st.sidebar.header("データのアップロード")
-uploaded_dem = st.sidebar.file_uploader("DEMデータをアップロード（.tif形式）", type=["tif"])
+uploaded_dem = st.sidebar.file_uploader("DEMデータをアップロード（XML形式）", type=["xml"])
 uploaded_buildings = st.sidebar.file_uploader("建物データをアップロード（GeoJSON形式）", type=["geojson"])
 
 if uploaded_dem and uploaded_buildings:
     # DEMデータの読み込み
-    dem_data, dem_transform = load_dem(uploaded_dem)
-    st.sidebar.success("DEMデータを読み込みました。")
+    dem_data, dem_transform = load_dem_xml(uploaded_dem)
+    if dem_data.size > 0 and dem_transform is not None:
+        st.sidebar.success("DEMデータを読み込みました。")
+    else:
+        st.sidebar.error("DEMデータの読み込みに失敗しました。")
 
     # 建物データの読み込み
     buildings = load_buildings(uploaded_buildings)
-    st.sidebar.success("建物データを読み込みました。")
+    if not buildings.empty:
+        st.sidebar.success("建物データを読み込みました。")
+    else:
+        st.sidebar.error("建物データの読み込みに失敗しました。")
 
     # 地図用グリッドの設定
     lat_min = st.session_state.map_center[0] - 0.01
@@ -708,7 +745,7 @@ if uploaded_dem and uploaded_buildings:
             if uploaded_dem and uploaded_buildings:
                 with st.spinner("音圧計算中..."):
                     st.session_state.heatmap_data, st.session_state.contours, sound_grid_smoothed = calculate_heatmap_and_contours_with_obstruction(
-                        st.session_state.speakers,
+                        st.session_state.measurements,
                         st.session_state.L0,
                         st.session_state.r_max,
                         grid_lat,
