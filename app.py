@@ -5,6 +5,7 @@ from streamlit_folium import st_folium
 import numpy as np
 import math
 import branca.colormap as cm
+import pandas as pd
 
 # 初期設定の確認・設定
 def initialize_session_state():
@@ -68,6 +69,19 @@ def calculate_heatmap(speakers, L0, r_max, grid_lat, grid_lon):
         for j in range(Ny)
         if not np.isnan(sound_grid[i, j])
     ]
+
+# CSV読み込み
+def load_csv(file):
+    try:
+        df = pd.read_csv(file)
+        for _, row in df.iterrows():
+            if "スピーカー" in row:
+                st.session_state.speakers.append([row["緯度"], row["経度"], [parse_direction_to_degrees(row["方向1"]), parse_direction_to_degrees(row["方向2"])]])
+            elif "計測値" in row:
+                st.session_state.measurements.append([row["緯度"], row["経度"], row["デシベル"]])
+        st.success("CSVを読み込みました")
+    except Exception as e:
+        st.error(f"CSV読み込み中にエラーが発生しました: {e}")
 
 # 地図を初期化して表示
 def render_map():
@@ -164,29 +178,8 @@ def render_controls():
                 st.session_state.heatmap_data = None
                 st.success("スピーカーをリセットしました")
 
-        # 計測値の追加
-        st.write("計測値の設定")
-        new_measurement = st.text_input("計測値 (緯度,経度,デシベル)", placeholder="例: 34.2579,133.2072,75")
-        if st.form_submit_button("計測値を追加"):
-            try:
-                lat, lon, db = map(float, new_measurement.split(","))
-                st.session_state.measurements.append([lat, lon, db])
-                st.success(f"計測値を追加しました: ({lat}, {lon}), {db} dB")
-            except ValueError:
-                st.error("入力形式が正しくありません")
-
-        # 計測値リセット
-        if st.form_submit_button("計測値をリセット"):
-            st.session_state.measurements = []
-            st.success("計測値をリセットしました")
-
-        # 音圧設定
-        st.write("音圧設定")
-        st.session_state.L0 = st.slider("初期音圧レベル (dB)", 50, 100, st.session_state.L0)
-        st.session_state.r_max = st.slider("最大伝播距離 (m)", 100, 2000, st.session_state.r_max)
-        if st.form_submit_button("更新"):
-            st.session_state.heatmap_data = None
-            st.success("ヒートマップを更新しました")
+        # CSVインポート
+        st.file_uploader("CSVファイルをアップロード", type=["csv"], key="csv_uploader", on_change=load_csv)
 
 # 凡例の表示
 def render_legend():
