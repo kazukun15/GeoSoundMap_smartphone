@@ -170,6 +170,23 @@ with st.form(key="controls"):
     st.session_state.L0 = st.slider("初期音圧レベル (dB)", 50, 100, st.session_state.L0)
     st.session_state.r_max = st.slider("最大伝播距離 (m)", 100, 2000, st.session_state.r_max)
 
+    # 計測値の設定
+    st.write("計測値の設定")
+    new_measurement = st.text_input("計測値 (緯度,経度,デシベル)", placeholder="例: 34.2579,133.2072,75")
+    if st.form_submit_button("計測値を追加"):
+        try:
+            lat, lon, db = map(float, new_measurement.split(","))
+            st.session_state.measurements.append([lat, lon, db])
+            st.success(f"計測値を追加しました: ({lat}, {lon}), {db} dB")
+        except ValueError:
+            st.error("入力形式が正しくありません")
+
+    # 計測値リセット
+    if st.form_submit_button("計測値をリセット"):
+        st.session_state.measurements = []
+        st.success("計測値をリセットしました")
+
+    # ヒートマップ更新
     if st.form_submit_button("更新"):
         if st.session_state.speakers:
             st.session_state.heatmap_data, st.session_state.contours = calculate_heatmap_and_contours(
@@ -178,6 +195,7 @@ with st.form(key="controls"):
             st.success("ヒートマップと等高線を更新しました")
         else:
             st.error("スピーカーが存在しません。")
+
 
 # 凡例バーを表示
 st.subheader("音圧レベルの凡例")
