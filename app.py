@@ -93,13 +93,34 @@ def render_map():
     # スピーカーのマーカー
     for speaker in st.session_state.speakers:
         lat, lon, directions = speaker
-        popup_text = f"スピーカー: ({lat:.6f}, {lon:.6f})\n方向: {directions}"
-        folium.Marker(location=[lat, lon], popup=popup_text, icon=folium.Icon(color="blue")).add_to(m)
+        popup_text = f"""
+        <div style="font-size:14px; line-height:1.5;">
+            <b>スピーカー位置:</b> ({lat:.6f}, {lon:.6f})<br>
+            <b>初期音圧レベル:</b> {st.session_state.L0} dB<br>
+            <b>最大伝播距離:</b> {st.session_state.r_max} m<br>
+            <b>方向:</b> {directions}
+        </div>
+        """
+        folium.Marker(
+            location=[lat, lon],
+            popup=folium.Popup(popup_text, max_width=300),
+            icon=folium.Icon(color="blue")
+        ).add_to(m)
 
     # 計測値のマーカー
     for measurement in st.session_state.measurements:
         lat, lon, db = measurement
-        folium.Marker(location=[lat, lon], popup=f"計測値: {db} dB", icon=folium.Icon(color="green")).add_to(m)
+        popup_text = f"""
+        <div style="font-size:14px; line-height:1.5;">
+            <b>計測位置:</b> ({lat:.6f}, {lon:.6f})<br>
+            <b>計測値:</b> {db} dB
+        </div>
+        """
+        folium.Marker(
+            location=[lat, lon],
+            popup=folium.Popup(popup_text, max_width=300),
+            icon=folium.Icon(color="green")
+        ).add_to(m)
 
     # ヒートマップ
     if st.session_state.heatmap_data:
