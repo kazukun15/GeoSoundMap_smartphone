@@ -30,7 +30,7 @@ if "heatmap_data" not in st.session_state:
     st.session_state.heatmap_data = None
 
 # contoursの初期化を修正: 必要なキーが存在するか確認し、存在しない場合は追加
-required_contour_keys = ["L0-20dB", "L0dB"]
+required_contour_keys = ["L0-20dB", "L0-1dB"]
 if "contours" not in st.session_state:
     st.session_state.contours = {key: [] for key in required_contour_keys}
 else:
@@ -154,10 +154,10 @@ def calculate_heatmap_and_contours(speakers, L0, r_max, grid_lat, grid_lon):
     valid_indices = ~np.isnan(sound_grid)
     heat_data = np.column_stack((grid_lat[valid_indices], grid_lon[valid_indices], sound_grid[valid_indices])).tolist()
 
-    # 等高線(L0-20dB, L0)
+    # 等高線(L0-20dB, L0-1dB)
     fill_grid = np.where(np.isnan(sound_grid), -9999, sound_grid)
-    contours = {"L0-20dB": [], "L0dB": []}
-    levels = {"L0-20dB": L0 - 20, "L0dB": L0}
+    contours = {"L0-20dB": [], "L0-1dB": []}
+    levels = {"L0-20dB": L0 - 20, "L0-1dB": L0 - 1}  # 修正: L0dB を L0-1dB に変更
     for key, level in levels.items():
         raw_contours = measure.find_contours(fill_grid, level=level)
         if not raw_contours:
@@ -351,7 +351,7 @@ if st.session_state.heatmap_data:
         min_opacity=0.4
     ).add_to(m)
 
-for key, level in {"L0-20dB": st.session_state.L0 - 20, "L0dB": st.session_state.L0}.items():
+for key, level in {"L0-20dB": st.session_state.L0 - 20, "L0-1dB": st.session_state.L0 - 1}.items():
     for contour in st.session_state.contours[key]:
         color = "green" if key == "L0-20dB" else "red"
         folium.PolyLine(locations=contour, color=color, weight=2).add_to(m)
