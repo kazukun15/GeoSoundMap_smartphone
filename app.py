@@ -318,7 +318,7 @@ def main():
             st.session_state.map_center = new_center
             st.session_state.map_zoom = new_zoom
             st.experimental_rerun()
-            return  # ここで処理を終了して再実行
+            st.stop()  # ここでスクリプトを停止して以降の処理を実行しない
 
     st.subheader("操作パネル")
 
