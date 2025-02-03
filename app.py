@@ -332,13 +332,17 @@ add_measurement_markers(m, st.session_state.measurements, st.session_state.speak
 if st.session_state.heatmap_data:
     add_heatmap_and_contours(m, st.session_state.heatmap_data, st.session_state.contours)
 
-# FoliumマップをStreamlit上に表示（マップの移動情報取得）
+# FoliumマップをStreamlit上に表示し、マップ移動・ズーム情報を取得
 st_data = st_folium(m, width=700, height=500, returned_objects=["center", "zoom"])
+
+# マップの移動・ズーム情報が変更された場合、session_stateを更新して再実行
 if st_data:
-    if "center" in st_data:
-        st.session_state.map_center = [st_data["center"]["lat"], st_data["center"]["lng"]]
-    if "zoom" in st_data:
-        st.session_state.map_zoom = st_data["zoom"]
+    new_center = [st_data["center"]["lat"], st_data["center"]["lng"]]
+    new_zoom = st_data["zoom"]
+    if new_center != st.session_state.map_center or new_zoom != st.session_state.map_zoom:
+        st.session_state.map_center = new_center
+        st.session_state.map_zoom = new_zoom
+        st.experimental_rerun()
 
 # ─────────────────────────────────────────────
 # 操作パネル
