@@ -317,8 +317,11 @@ def main():
         if new_center != st.session_state.map_center or new_zoom != st.session_state.map_zoom:
             st.session_state.map_center = new_center
             st.session_state.map_zoom = new_zoom
-            st.experimental_rerun()
-            st.stop()  # ここでスクリプトを停止して以降の処理を実行しない
+            try:
+                st.experimental_rerun()
+            except Exception:
+                st.stop()
+            st.stop()  # 以降の処理が実行されないように停止
 
     st.subheader("操作パネル")
 
