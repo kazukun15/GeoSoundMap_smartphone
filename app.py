@@ -378,6 +378,105 @@ def main():
     if st.button("更新"):
         if st.session_state.speakers:
             grid_lat, grid_lon = create_grid(st.session_state.map_center, st.session_state.map_zoom)
+            st.session_state.heatmap_data, st.session_state.contours
+            # ─────────────────────────────────────────────
+# メイン処理（Streamlit UI）
+# ─────────────────────────────────────────────
+def main():
+    st.title("防災スピーカー音圧ヒートマップ")
+
+    grid_lat, grid_lon = create_grid(st.session_state.map_center, st.session_state.map_zoom)
+
+    if st.session_state.heatmap_data is None and st.session_state.speakers:
+        st.session_state.heatmap_data, st.session_state.contours = calculate_heatmap_and_contours(
+            st.session_state.speakers,
+            st.session_state.L0,
+            st.session_state.r_max,
+            grid_lat,
+            grid_lon
+        )
+
+    m = folium.Map(
+        location=st.session_state.map_center,
+        zoom_start=st.session_state.map_zoom
+    )
+
+    add_speaker_markers(m, st.session_state.speakers, st.session_state.L0, st.session_state.r_max)
+    add_measurement_markers(m, st.session_state.measurements, st.session_state.speakers, st.session_state.L0, st.session_state.r_max)
+
+    if st.session_state.heatmap_data:
+        add_heatmap_and_contours(m, st.session_state.heatmap_data, st.session_state.contours)
+
+    # マップ表示と移動・ズーム情報の取得
+    st_data = st_folium(m, width=700, height=500, returned_objects=["center", "zoom"])
+
+    if st_data:
+        new_center = [st_data["center"]["lat"], st_data["center"]["lng"]]
+        new_zoom = st_data["zoom"]
+        if new_center != st.session_state.map_center or new_zoom != st.session_state.map_zoom:
+            st.session_state.map_center = new_center
+            st.session_state.map_zoom = new_zoom
+            try:
+                st.experimental_rerun()
+            except Exception:
+                st.stop()
+            st.stop()  # 以降の処理が実行されないように停止
+
+    st.subheader("操作パネル")
+
+    uploaded_file = st.file_uploader("CSVをアップロード (種別/緯度/経度/データ1..3列)", type=["csv"])
+    if uploaded_file:
+        speakers_loaded, measurements_loaded = load_csv(uploaded_file)
+        if speakers_loaded:
+            st.session_state.speakers.extend(speakers_loaded)
+        if measurements_loaded:
+            st.session_state.measurements.extend(measurements_loaded)
+        st.success("CSVを読み込みました。『更新』ボタンでヒートマップに反映可能です。")
+
+    new_speaker = st.text_input(
+        "新しいスピーカ (緯度,経度,方向1,方向2,方向3)",
+        placeholder="例: 34.2579,133.2072,N,E,SE"
+    )
+    if st.button("スピーカを追加"):
+        try:
+            items = new_speaker.split(",")
+            lat_spk = float(items[0])
+            lon_spk = float(items[1])
+            dirs_spk = [parse_direction_to_degrees(d) for d in items[2:]]
+            st.session_state.speakers.append([lat_spk, lon_spk, dirs_spk])
+            st.session_state.heatmap_data = None
+            st.success(f"スピーカを追加しました: ({lat_spk}, {lon_spk}), 方向 = {dirs_spk}")
+        except Exception as e:
+            st.error(f"入力エラー: {e}")
+
+    new_measurement = st.text_input("計測値 (緯度,経度,dB)", placeholder="例: 34.2578,133.2075,75")
+    if st.button("計測値を追加"):
+        try:
+            items = new_measurement.split(",")
+            lat_m = float(items[0])
+            lon_m = float(items[1])
+            db_m = float(items[2])
+            st.session_state.measurements.append([lat_m, lon_m, db_m])
+            st.success(f"計測値を追加しました: ({lat_m}, {lon_m}), {db_m} dB")
+        except Exception as e:
+            st.error(f"入力エラー: {e}")
+
+    if st.button("スピーカをリセット"):
+        st.session_state.speakers = []
+        st.session_state.heatmap_data = None
+        st.session_state.contours = {"60dB": [], "80dB": []}
+        st.success("スピーカ情報をリセットしました")
+
+    if st.button("計測値をリセット"):
+        st.session_state.measurements = []
+        st.success("計測値情報をリセットしました")
+
+    st.session_state.L0 = st.slider("初期音圧レベル(dB)", 50, 100, st.session_state.L0)
+    st.session_state.r_max = st.slider("最大伝播距離(m)", 100, 2000, st.session_state.r_max)
+
+    if st.button("更新"):
+        if st.session_state.speakers:
+            grid_lat, grid_lon = create_grid(st.session_state.map_center, st.session_state.map_zoom)
             st.session_state.heatmap_data, st.session_state.contours = calculate_heatmap_and_contours(
                 st.session_state.speakers,
                 st.session_state.L0,
