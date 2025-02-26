@@ -43,10 +43,6 @@ DIRECTION_MAPPING = {
 }
 
 def parse_direction_to_degrees(direction_str: str) -> float:
-    """
-    方向文字列を度数に変換する。
-    DIRECTION_MAPPING に該当しない場合は float 変換を試み、失敗すれば 0 を返す。
-    """
     direction_str = direction_str.strip().upper()
     if direction_str in DIRECTION_MAPPING:
         return DIRECTION_MAPPING[direction_str]
@@ -60,23 +56,16 @@ def parse_direction_to_degrees(direction_str: str) -> float:
 # 1地点での理論音圧(dB)計算
 # ─────────────────────────────────────────────
 def calc_theoretical_db_for_point(lat: float, lon: float, speakers: list, L0: float, r_max: float):
-    """
-    指定された1地点に対して、複数スピーカの合成音圧レベル(dB)を理論計算する。
-    """
     lat, lon = float(lat), float(lon)
     power_sum = 0.0
-
     for spk_lat, spk_lon, spk_dirs in speakers:
         dx = (lat - spk_lat) * 111320
         dy = (lon - spk_lon) * 111320
         dist = math.sqrt(dx * dx + dy * dy)
         dist = max(dist, 1)  # 最小1m
-
         if dist > r_max:
             continue
-
         bearing = math.degrees(math.atan2((lon - spk_lon), (lat - spk_lat))) % 360
-
         spk_power = 0.0
         for direction in spk_dirs:
             angle_diff = abs(bearing - direction) % 360
@@ -85,12 +74,9 @@ def calc_theoretical_db_for_point(lat: float, lon: float, speakers: list, L0: fl
             directivity_factor = max(0.0, 1 - angle_diff / 180.0)
             p = 10 ** ((L0 - 20 * math.log10(dist)) / 10)
             spk_power += directivity_factor * p
-
         power_sum += spk_power
-
     if power_sum <= 0:
         return None
-
     db_value = 10 * math.log10(power_sum)
     return max(L0 - 40, min(db_value, L0))
 
@@ -101,17 +87,14 @@ def calculate_heatmap_and_contours(speakers: list, L0: float, r_max: float, grid
     Nx, Ny = grid_lat.shape
     power_sum = np.zeros((Nx, Ny))
     grid_coords = np.stack([grid_lat.ravel(), grid_lon.ravel()], axis=1)
-
     for spk_lat, spk_lon, spk_dirs in speakers:
         spk_coords = np.array([spk_lat, spk_lon])
         distances = np.sqrt(np.sum((grid_coords - spk_coords) ** 2, axis=1)) * 111320
         distances = np.maximum(distances, 1)
-
         bearings = np.degrees(np.arctan2(
             grid_coords[:, 1] - spk_lon,
             grid_coords[:, 0] - spk_lat
         )) % 360
-
         power = np.zeros_like(distances)
         for direction in spk_dirs:
             angle_diff = np.abs(bearings - direction) % 360
@@ -119,22 +102,18 @@ def calculate_heatmap_and_contours(speakers: list, L0: float, r_max: float, grid
             directivity_factor = np.clip(1 - angle_diff / 180, 0, 1)
             p = 10 ** ((L0 - 20 * np.log10(distances)) / 10)
             power += directivity_factor * p
-
         power[distances > r_max] = 0
         power_sum += power.reshape(Nx, Ny)
-
     sound_grid = np.full_like(power_sum, np.nan, dtype=float)
     mask = power_sum > 0
     sound_grid[mask] = 10 * np.log10(power_sum[mask])
     sound_grid = np.clip(sound_grid, L0 - 40, L0)
-
     heat_data = []
     for i in range(Nx):
         for j in range(Ny):
             val = sound_grid[i, j]
             if not np.isnan(val):
                 heat_data.append([grid_lat[i, j], grid_lon[i, j], val])
-
     fill_grid = np.where(np.isnan(sound_grid), -9999, sound_grid)
     contours = {"60dB": [], "80dB": []}
     for key, level in {"60dB": 60, "80dB": 80}.items():
@@ -147,7 +126,6 @@ def calculate_heatmap_and_contours(speakers: list, L0: float, r_max: float, grid
                     lat_lon_contour.append((grid_lat[iy, ix], grid_lon[iy, ix]))
             if len(lat_lon_contour) > 1:
                 contours[key].append(lat_lon_contour)
-
     return heat_data, contours
 
 # ─────────────────────────────────────────────
@@ -165,17 +143,14 @@ def load_csv(file) -> (list, list):
             d1 = row.get("データ1", None)
             d2 = row.get("データ2", None)
             d3 = row.get("データ3", None)
-
             if pd.isna(lat) or pd.isna(lon):
                 continue
-
             try:
                 lat = float(lat)
                 lon = float(lon)
             except ValueError:
                 st.warning("緯度/経度の値が不正です。該当行をスキップします。")
                 continue
-
             if item_type == "スピーカ":
                 directions = []
                 for d in [d1, d2, d3]:
@@ -285,9 +260,11 @@ def add_heatmap_and_contours(m: folium.Map, heat_data: list, contours: dict):
 # ─────────────────────────────────────────────
 def main():
     st.title("防災スピーカー音圧ヒートマップ")
-
+    
+    # マップ中心とズームに合わせたグリッド生成
     grid_lat, grid_lon = create_grid(st.session_state.map_center, st.session_state.map_zoom)
-
+    
+    # ヒートマップデータが未計算の場合は再計算する
     if st.session_state.heatmap_data is None and st.session_state.speakers:
         st.session_state.heatmap_data, st.session_state.contours = calculate_heatmap_and_contours(
             st.session_state.speakers,
@@ -296,35 +273,32 @@ def main():
             grid_lat,
             grid_lon
         )
-
+    
     m = folium.Map(
         location=st.session_state.map_center,
         zoom_start=st.session_state.map_zoom
     )
-
+    
     add_speaker_markers(m, st.session_state.speakers, st.session_state.L0, st.session_state.r_max)
     add_measurement_markers(m, st.session_state.measurements, st.session_state.speakers, st.session_state.L0, st.session_state.r_max)
-
+    
     if st.session_state.heatmap_data:
         add_heatmap_and_contours(m, st.session_state.heatmap_data, st.session_state.contours)
-
-    # マップ表示と移動・ズーム情報の取得
+    
+    # マップの移動・ズーム情報の取得と更新
     st_data = st_folium(m, width=700, height=500, returned_objects=["center", "zoom"])
-
     if st_data:
         new_center = [st_data["center"]["lat"], st_data["center"]["lng"]]
         new_zoom = st_data["zoom"]
         if new_center != st.session_state.map_center or new_zoom != st.session_state.map_zoom:
             st.session_state.map_center = new_center
             st.session_state.map_zoom = new_zoom
-            try:
-                st.experimental_rerun()
-            except Exception:
-                st.stop()
-            st.stop()  # 以降の処理が実行されないように停止
-
+            # ヒートマップ用のグリッドを更新するためにデータをリセット
+            st.session_state.heatmap_data = None
+    
     st.subheader("操作パネル")
-
+    
+    # CSVアップロード
     uploaded_file = st.file_uploader("CSVをアップロード (種別/緯度/経度/データ1..3列)", type=["csv"])
     if uploaded_file:
         speakers_loaded, measurements_loaded = load_csv(uploaded_file)
@@ -333,7 +307,8 @@ def main():
         if measurements_loaded:
             st.session_state.measurements.extend(measurements_loaded)
         st.success("CSVを読み込みました。『更新』ボタンでヒートマップに反映可能です。")
-
+    
+    # 新規スピーカ追加
     new_speaker = st.text_input(
         "新しいスピーカ (緯度,経度,方向1,方向2,方向3)",
         placeholder="例: 34.2579,133.2072,N,E,SE"
@@ -349,7 +324,8 @@ def main():
             st.success(f"スピーカを追加しました: ({lat_spk}, {lon_spk}), 方向 = {dirs_spk}")
         except Exception as e:
             st.error(f"入力エラー: {e}")
-
+    
+    # 計測値追加
     new_measurement = st.text_input("計測値 (緯度,経度,dB)", placeholder="例: 34.2578,133.2075,75")
     if st.button("計測値を追加"):
         try:
@@ -361,119 +337,21 @@ def main():
             st.success(f"計測値を追加しました: ({lat_m}, {lon_m}), {db_m} dB")
         except Exception as e:
             st.error(f"入力エラー: {e}")
-
+    
     if st.button("スピーカをリセット"):
         st.session_state.speakers = []
         st.session_state.heatmap_data = None
         st.session_state.contours = {"60dB": [], "80dB": []}
         st.success("スピーカ情報をリセットしました")
-
+    
     if st.button("計測値をリセット"):
         st.session_state.measurements = []
         st.success("計測値情報をリセットしました")
-
+    
     st.session_state.L0 = st.slider("初期音圧レベル(dB)", 50, 100, st.session_state.L0)
     st.session_state.r_max = st.slider("最大伝播距離(m)", 100, 2000, st.session_state.r_max)
-
-    if st.button("更新"):
-        if st.session_state.speakers:
-            grid_lat, grid_lon = create_grid(st.session_state.map_center, st.session_state.map_zoom)
-            st.session_state.heatmap_data, st.session_state.contours
-            # ─────────────────────────────────────────────
-# メイン処理（Streamlit UI）
-# ─────────────────────────────────────────────
-def main():
-    st.title("防災スピーカー音圧ヒートマップ")
-
-    grid_lat, grid_lon = create_grid(st.session_state.map_center, st.session_state.map_zoom)
-
-    if st.session_state.heatmap_data is None and st.session_state.speakers:
-        st.session_state.heatmap_data, st.session_state.contours = calculate_heatmap_and_contours(
-            st.session_state.speakers,
-            st.session_state.L0,
-            st.session_state.r_max,
-            grid_lat,
-            grid_lon
-        )
-
-    m = folium.Map(
-        location=st.session_state.map_center,
-        zoom_start=st.session_state.map_zoom
-    )
-
-    add_speaker_markers(m, st.session_state.speakers, st.session_state.L0, st.session_state.r_max)
-    add_measurement_markers(m, st.session_state.measurements, st.session_state.speakers, st.session_state.L0, st.session_state.r_max)
-
-    if st.session_state.heatmap_data:
-        add_heatmap_and_contours(m, st.session_state.heatmap_data, st.session_state.contours)
-
-    # マップ表示と移動・ズーム情報の取得
-    st_data = st_folium(m, width=700, height=500, returned_objects=["center", "zoom"])
-
-    if st_data:
-        new_center = [st_data["center"]["lat"], st_data["center"]["lng"]]
-        new_zoom = st_data["zoom"]
-        if new_center != st.session_state.map_center or new_zoom != st.session_state.map_zoom:
-            st.session_state.map_center = new_center
-            st.session_state.map_zoom = new_zoom
-            try:
-                st.experimental_rerun()
-            except Exception:
-                st.stop()
-            st.stop()  # 以降の処理が実行されないように停止
-
-    st.subheader("操作パネル")
-
-    uploaded_file = st.file_uploader("CSVをアップロード (種別/緯度/経度/データ1..3列)", type=["csv"])
-    if uploaded_file:
-        speakers_loaded, measurements_loaded = load_csv(uploaded_file)
-        if speakers_loaded:
-            st.session_state.speakers.extend(speakers_loaded)
-        if measurements_loaded:
-            st.session_state.measurements.extend(measurements_loaded)
-        st.success("CSVを読み込みました。『更新』ボタンでヒートマップに反映可能です。")
-
-    new_speaker = st.text_input(
-        "新しいスピーカ (緯度,経度,方向1,方向2,方向3)",
-        placeholder="例: 34.2579,133.2072,N,E,SE"
-    )
-    if st.button("スピーカを追加"):
-        try:
-            items = new_speaker.split(",")
-            lat_spk = float(items[0])
-            lon_spk = float(items[1])
-            dirs_spk = [parse_direction_to_degrees(d) for d in items[2:]]
-            st.session_state.speakers.append([lat_spk, lon_spk, dirs_spk])
-            st.session_state.heatmap_data = None
-            st.success(f"スピーカを追加しました: ({lat_spk}, {lon_spk}), 方向 = {dirs_spk}")
-        except Exception as e:
-            st.error(f"入力エラー: {e}")
-
-    new_measurement = st.text_input("計測値 (緯度,経度,dB)", placeholder="例: 34.2578,133.2075,75")
-    if st.button("計測値を追加"):
-        try:
-            items = new_measurement.split(",")
-            lat_m = float(items[0])
-            lon_m = float(items[1])
-            db_m = float(items[2])
-            st.session_state.measurements.append([lat_m, lon_m, db_m])
-            st.success(f"計測値を追加しました: ({lat_m}, {lon_m}), {db_m} dB")
-        except Exception as e:
-            st.error(f"入力エラー: {e}")
-
-    if st.button("スピーカをリセット"):
-        st.session_state.speakers = []
-        st.session_state.heatmap_data = None
-        st.session_state.contours = {"60dB": [], "80dB": []}
-        st.success("スピーカ情報をリセットしました")
-
-    if st.button("計測値をリセット"):
-        st.session_state.measurements = []
-        st.success("計測値情報をリセットしました")
-
-    st.session_state.L0 = st.slider("初期音圧レベル(dB)", 50, 100, st.session_state.L0)
-    st.session_state.r_max = st.slider("最大伝播距離(m)", 100, 2000, st.session_state.r_max)
-
+    
+    # 「更新」ボタンによるヒートマップ再計算
     if st.button("更新"):
         if st.session_state.speakers:
             grid_lat, grid_lon = create_grid(st.session_state.map_center, st.session_state.map_zoom)
@@ -487,7 +365,7 @@ def main():
             st.success("ヒートマップと等高線を再計算しました")
         else:
             st.error("スピーカがありません。追加してください。")
-
+    
     st.subheader("CSVのエクスポート (種別/緯度/経度/データ1..3形式)")
     if st.button("CSVをエクスポート"):
         csv_data = export_to_csv(st.session_state.speakers, st.session_state.measurements)
@@ -497,7 +375,7 @@ def main():
             file_name="sound_map_data.csv",
             mime="text/csv"
         )
-
+    
     st.subheader("音圧レベルの凡例")
     color_scale = cm.LinearColormap(
         colors=["blue", "green", "yellow", "red"],
